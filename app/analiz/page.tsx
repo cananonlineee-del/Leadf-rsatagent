@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import type { Lead, InstagramData, MetaAdData, FacebookData, TikTokData } from '../api/analyze/route'
 import { IL_ILCE, ILLER } from '../../lib/turkiye-il-ilce'
 import { Navbar } from '../components/navbar'
@@ -13,9 +13,9 @@ function safeHostname(url: string): string {
 
 function priceLevelLabel(level: string | null): string | null {
   switch (level) {
-    case 'PRICE_LEVEL_INEXPENSIVE':  return '₺'
-    case 'PRICE_LEVEL_MODERATE':     return '₺₺'
-    case 'PRICE_LEVEL_EXPENSIVE':    return '₺₺₺'
+    case 'PRICE_LEVEL_INEXPENSIVE':    return '₺'
+    case 'PRICE_LEVEL_MODERATE':       return '₺₺'
+    case 'PRICE_LEVEL_EXPENSIVE':      return '₺₺₺'
     case 'PRICE_LEVEL_VERY_EXPENSIVE': return '₺₺₺₺'
     default: return null
   }
@@ -40,7 +40,6 @@ function formatDate(iso: string): string {
 
 // ─── Küçük yardımcı bileşenler ────────────────────────────────────────────────
 
-/** Etiket + değer satırı (detay bölümü için) */
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex items-start gap-3">
@@ -50,16 +49,6 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
   )
 }
 
-/** Evet/hayır sinyali */
-function Sig({ ok, yes, no }: { ok: boolean; yes: string; no: string }) {
-  return (
-    <span className={`text-xs font-medium ${ok ? 'text-emerald-400' : 'text-red-400'}`}>
-      {ok ? yes : no}
-    </span>
-  )
-}
-
-/** İnce yatay bar */
 function ScoreBar({ label, value, color }: { label: string; value: number; color: string }) {
   return (
     <div>
@@ -74,22 +63,13 @@ function ScoreBar({ label, value, color }: { label: string; value: number; color
   )
 }
 
-// ─── Instagram güven rozeti ───────────────────────────────────────────────────
+// ─── Güven rozetleri ──────────────────────────────────────────────────────────
 
 function igBadge(confidence: InstagramData['confidence']): { label: string; cls: string } {
-  if (confidence === 'definitive') return { label: 'Kesin',    cls: 'bg-emerald-500/10 text-emerald-400' }
-  if (confidence === 'likely')     return { label: 'Olası',    cls: 'bg-yellow-500/10 text-yellow-400' }
-  return                                  { label: 'Tahmini',  cls: 'bg-white/5 text-zinc-500' }
+  if (confidence === 'definitive') return { label: 'Kesin',   cls: 'bg-emerald-500/10 text-emerald-400' }
+  if (confidence === 'likely')     return { label: 'Olası',   cls: 'bg-yellow-500/10 text-yellow-400' }
+  return                                  { label: 'Tahmini', cls: 'bg-white/5 text-zinc-500' }
 }
-
-// ─── Meta Ads güven rozeti ────────────────────────────────────────────────────
-
-function metaBadge(confidence: MetaAdData['confidence']): { label: string; cls: string } {
-  if (confidence === 'definitive') return { label: 'Kesin', cls: 'bg-emerald-500/10 text-emerald-400' }
-  return                                  { label: 'Olası', cls: 'bg-yellow-500/10 text-yellow-400' }
-}
-
-// ─── Facebook güven rozeti ────────────────────────────────────────────────────
 
 function fbBadge(confidence: FacebookData['confidence']): { label: string; cls: string } {
   if (confidence === 'definitive') return { label: 'Kesin',   cls: 'bg-emerald-500/10 text-emerald-400' }
@@ -97,15 +77,18 @@ function fbBadge(confidence: FacebookData['confidence']): { label: string; cls: 
   return                                  { label: 'Tahmini', cls: 'bg-white/5 text-zinc-500' }
 }
 
-// ─── TikTok güven rozeti ──────────────────────────────────────────────────────
-
 function ttBadge(confidence: TikTokData['confidence']): { label: string; cls: string } {
   if (confidence === 'definitive') return { label: 'Kesin',   cls: 'bg-emerald-500/10 text-emerald-400' }
   if (confidence === 'likely')     return { label: 'Olası',   cls: 'bg-yellow-500/10 text-yellow-400' }
   return                                  { label: 'Tahmini', cls: 'bg-white/5 text-zinc-500' }
 }
 
-// ─── "Reklam İhtiyacı" seviyesi ───────────────────────────────────────────────
+function metaBadge(confidence: MetaAdData['confidence']): { label: string; cls: string } {
+  if (confidence === 'definitive') return { label: 'Kesin', cls: 'bg-emerald-500/10 text-emerald-400' }
+  return                                  { label: 'Olası', cls: 'bg-yellow-500/10 text-yellow-400' }
+}
+
+// ─── Reklam İhtiyacı seviyesi ─────────────────────────────────────────────────
 
 function needMeta(score: number): { label: string; badgeCls: string; borderCls: string } {
   if (score >= 70) return {
@@ -127,7 +110,6 @@ function needMeta(score: number): { label: string; badgeCls: string; borderCls: 
 
 // ─── WhatsApp Mesaj Üreteci ───────────────────────────────────────────────────
 
-/** Türkiye telefon numarasını wa.me formatına çevirir (örn. "0532 555 0000" → "905325550000") */
 function toWaPhone(phone: string): string | null {
   const d = phone.replace(/\D/g, '')
   if (d.startsWith('90') && d.length === 12) return d
@@ -136,10 +118,6 @@ function toWaPhone(phone: string): string | null {
   return null
 }
 
-/**
- * Türkçe ayrılma eki (ablative suffix) — ünlü uyumuna göre "dan" veya "den" döner.
- * Büyük ünlüler (a, ı, o, u) → "dan"; küçük ünlüler (e, i, ö, ü) → "den".
- */
 function ablative(word: string): string {
   const back = /[aıou]/
   const vowels = word.toLowerCase().match(/[aeıiouöü]/g)
@@ -147,10 +125,6 @@ function ablative(word: string): string {
   return back.test(lastVowel) ? "'dan" : "'den"
 }
 
-/**
- * İşletmenin en kritik eksiğini, WhatsApp'a uygun kısa ve doğal bir cümleye çevirir.
- * Lead'in gerçek verisine bakarak seçim yapar — jenerik değil, kişiselleştirilmiş.
- */
 function primaryGapHook(lead: Lead): string {
   if (lead.websiteSource === 'none')
     return 'çevrimiçi bir varlığınızın olmadığını gördüm'
@@ -204,10 +178,6 @@ function primaryGapHook(lead: Lead): string {
   return 'dijital varlığınızda güçlendirebileceğimiz önemli noktalar dikkatimi çekti'
 }
 
-/**
- * Detaylı mesaj için işletmeye özgü 2-3 satır üretir.
- * Her satır somut veri içerir (sayı, skor, gün) — madde işareti yok, düz metin.
- */
 function detailedGapLines(lead: Lead): string[] {
   const lines: string[] = []
 
@@ -324,23 +294,258 @@ function buildDetailedMessage(lead: Lead, senderName: string, agencyName: string
   )
 }
 
+// ─── Popüler sektörler (hızlı seçim chip'leri) ────────────────────────────────
+
+const POPULAR_SECTORS = [
+  { label: 'Diş Kliniği',  search: 'diş kliniği' },
+  { label: 'Kuaför',       search: 'kuaför' },
+  { label: 'Restoran',     search: 'restoran' },
+  { label: 'Güzellik',     search: 'güzellik merkezi' },
+  { label: 'Emlak',        search: 'emlak ofisi' },
+  { label: 'Oto Servis',   search: 'oto servis' },
+  { label: 'Spor Salonu',  search: 'spor salonu' },
+  { label: 'Avukat',       search: 'avukat' },
+]
+
+// ─── Şehir + İlçe autocomplete veri seti ──────────────────────────────────────
+
+const ALL_CITY_DISTRICTS = Object.entries(IL_ILCE).flatMap(([il, ilceler]) =>
+  ilceler.map(ilce => ({ label: `${ilce}, ${il}`, il, ilce }))
+)
+
+// ─── Yükleniyor adımları ──────────────────────────────────────────────────────
+
+const LOADING_STEPS = [
+  { text: 'Google Places taranıyor…',           sub: 'İlçedeki işletmeler listeleniyor' },
+  { text: 'Web siteleri analiz ediliyor…',      sub: 'Hız, SSL, SEO ve pixel kontrol ediliyor' },
+  { text: 'Sosyal medya taranıyor…',            sub: 'Instagram, Facebook, TikTok' },
+  { text: 'Reklam altyapısı kontrol ediliyor…', sub: 'Meta Ads ve piksel durumu' },
+  { text: 'Skorlar hesaplanıyor…',              sub: 'Fırsat analizi tamamlanıyor' },
+]
+
+// ─── CityAutocomplete bileşeni ────────────────────────────────────────────────
+
+function CityAutocomplete({
+  value,
+  onChange,
+}: {
+  value: string
+  onChange: (il: string, ilce: string) => void
+}) {
+  const [query, setQuery] = useState(value)
+  const [open, setOpen]   = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => { setQuery(value) }, [value])
+
+  useEffect(() => {
+    function handler(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  const filtered = query.length >= 2
+    ? ALL_CITY_DISTRICTS.filter(c =>
+        c.ilce.toLowerCase().includes(query.toLowerCase()) ||
+        c.il.toLowerCase().includes(query.toLowerCase())
+      ).slice(0, 8)
+    : []
+
+  return (
+    <div ref={ref} className="relative">
+      <input
+        type="text"
+        placeholder="İlçe veya il ara (örn: Kadıköy, Beşiktaş, Ankara)"
+        value={query}
+        autoComplete="off"
+        onChange={e => {
+          setQuery(e.target.value)
+          setOpen(true)
+          if (!e.target.value) onChange('', '')
+        }}
+        onFocus={() => { if (query.length >= 2) setOpen(true) }}
+        className="w-full bg-white/[0.07] border border-white/[0.12] text-white rounded-xl px-3 py-2.5 text-sm placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500/40 transition"
+      />
+      {open && filtered.length > 0 && (
+        <ul className="absolute z-50 left-0 right-0 top-full mt-1 bg-[#1c1c22] border border-white/[0.14] rounded-xl overflow-hidden shadow-2xl">
+          {filtered.map(c => (
+            <li key={`${c.il}-${c.ilce}`}>
+              <button
+                type="button"
+                onMouseDown={e => {
+                  e.preventDefault()
+                  setQuery(c.label)
+                  onChange(c.il, c.ilce)
+                  setOpen(false)
+                }}
+                className="w-full text-left px-4 py-2.5 text-sm hover:bg-white/[0.07] flex items-center justify-between transition-colors"
+              >
+                <span className="text-zinc-200 font-medium">{c.ilce}</span>
+                <span className="text-xs text-zinc-600 ml-2">{c.il}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {open && query.length >= 2 && filtered.length === 0 && (
+        <div className="absolute z-50 left-0 right-0 top-full mt-1 bg-[#1c1c22] border border-white/[0.12] rounded-xl px-4 py-3 text-xs text-zinc-600 shadow-xl">
+          Sonuç bulunamadı
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Mesaj Önizleme Modalı ────────────────────────────────────────────────────
+
+function MessagePreviewModal({
+  lead,
+  senderName,
+  agencyName,
+  agencyWebsite,
+  initialType,
+  onClose,
+}: {
+  lead: Lead
+  senderName: string
+  agencyName: string
+  agencyWebsite: string
+  initialType: 'short' | 'long'
+  onClose: () => void
+}) {
+  const [type, setType]         = useState(initialType)
+  const [copied, setCopied]     = useState(false)
+
+  const shortMsg = buildShortMessage(lead, senderName, agencyName, agencyWebsite)
+  const longMsg  = buildDetailedMessage(lead, senderName, agencyName, agencyWebsite)
+
+  const [editedMsg, setEditedMsg] = useState(type === 'short' ? shortMsg : longMsg)
+
+  useEffect(() => {
+    setEditedMsg(type === 'short' ? shortMsg : longMsg)
+    setCopied(false)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [type])
+
+  const waPhone = lead.phone ? toWaPhone(lead.phone) : null
+
+  async function doCopy() {
+    await navigator.clipboard.writeText(editedMsg)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4"
+      onClick={e => { if (e.target === e.currentTarget) onClose() }}
+    >
+      <div className="bg-[#1c1c22] border border-white/[0.12] rounded-t-2xl sm:rounded-2xl w-full sm:max-w-lg shadow-2xl">
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-white/[0.08]">
+          <div>
+            <h3 className="text-white font-bold text-sm">{lead.name}</h3>
+            <p className="text-zinc-600 text-xs mt-0.5">WhatsApp mesajını düzenle ve gönder</p>
+          </div>
+          <button
+            onClick={onClose}
+            className="w-7 h-7 flex items-center justify-center rounded-lg text-zinc-500 hover:text-white hover:bg-white/[0.08] transition-colors text-sm"
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* Type toggle */}
+        <div className="px-5 pt-4">
+          <div className="flex rounded-xl bg-white/[0.06] p-1">
+            <button
+              type="button"
+              onClick={() => setType('short')}
+              className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                type === 'short' ? 'bg-white/10 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'
+              }`}
+            >
+              Kısa Mesaj
+            </button>
+            <button
+              type="button"
+              onClick={() => setType('long')}
+              className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                type === 'long' ? 'bg-white/10 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'
+              }`}
+            >
+              Detaylı Mesaj
+            </button>
+          </div>
+        </div>
+
+        {/* Editable textarea */}
+        <div className="px-5 pt-3 pb-1">
+          <textarea
+            value={editedMsg}
+            onChange={e => setEditedMsg(e.target.value)}
+            rows={type === 'short' ? 5 : 9}
+            className="w-full bg-white/[0.04] border border-white/[0.10] rounded-xl px-3 py-3 text-sm text-zinc-200 leading-relaxed resize-none focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500/40 transition"
+          />
+          <p className="text-[11px] text-zinc-700 mt-1">Mesajı göndermeden önce düzenleyebilirsin</p>
+        </div>
+
+        {/* Actions */}
+        <div className="flex gap-2.5 px-5 py-4">
+          <button
+            onClick={doCopy}
+            className={`flex-1 text-xs font-semibold py-2.5 rounded-xl border transition-colors ${
+              copied
+                ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-400'
+                : 'border-white/[0.12] text-zinc-400 hover:text-white hover:bg-white/[0.06]'
+            }`}
+          >
+            {copied ? '✓ Kopyalandı' : 'Kopyala'}
+          </button>
+          {waPhone ? (
+            <a
+              href={`https://wa.me/${waPhone}?text=${encodeURIComponent(editedMsg)}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={onClose}
+              className="flex-1 text-center text-xs font-bold py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white transition-colors"
+            >
+              WhatsApp&rsquo;ta Aç ↗
+            </a>
+          ) : (
+            <span
+              title="Telefon numarası bulunamadı"
+              className="flex-1 text-center text-xs font-semibold py-2.5 rounded-xl border border-white/[0.08] text-zinc-700 cursor-not-allowed"
+            >
+              Telefon Yok
+            </span>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── LeadCard ─────────────────────────────────────────────────────────────────
 
-function LeadCard({ lead, rank, senderName, agencyName, agencyWebsite }: {
+function LeadCard({ lead, rank, senderName, agencyName, agencyWebsite, onPreview }: {
   lead: Lead
   rank: number
   senderName: string
   agencyName: string
   agencyWebsite: string
+  onPreview: (type: 'short' | 'long') => void
 }) {
-  const [expanded, setExpanded] = useState(false)
+  const [expanded, setExpanded]     = useState(false)
   const [showAllGaps, setShowAllGaps] = useState(false)
 
   const need  = needMeta(lead.score)
   const price = priceLevelLabel(lead.priceLevel)
   const type  = formatType(lead.primaryType)
 
-  const heroGap = lead.gaps[0] ?? ''
+  const heroGap  = lead.gaps[0] ?? ''
   const restGaps = lead.gaps.slice(1)
 
   const siteUrgent =
@@ -364,30 +569,28 @@ function LeadCard({ lead, rank, senderName, agencyName, agencyWebsite }: {
     !lead.siteAnalysis?.hasGoogleAds
 
   const services = [
-    { label: 'Web Sitesi',       urgent: siteUrgent,   weight: lead.categoryProfile.website },
-    { label: 'Google SEO',       urgent: seoUrgent,    weight: lead.categoryProfile.seo },
-    { label: 'Sosyal Medya',     urgent: socialUrgent, weight: lead.categoryProfile.instagram },
-    { label: 'Reklam Yönetimi',  urgent: adsUrgent,    weight: lead.categoryProfile.ads },
+    { label: 'Web Sitesi',      urgent: siteUrgent,   weight: lead.categoryProfile.website },
+    { label: 'Google SEO',      urgent: seoUrgent,    weight: lead.categoryProfile.seo },
+    { label: 'Sosyal Medya',    urgent: socialUrgent, weight: lead.categoryProfile.instagram },
+    { label: 'Reklam Yönetimi', urgent: adsUrgent,    weight: lead.categoryProfile.ads },
   ].sort((a, b) => {
     if (a.urgent !== b.urgent) return a.urgent ? -1 : 1
     return b.weight - a.weight
   })
 
   const igActivity: Record<InstagramData['activity'], { label: string; cls: string }> = {
-    active:    { label: 'Aktif',           cls: 'text-emerald-400' },
-    dormant:   { label: 'Durgun',          cls: 'text-amber-400' },
-    neglected: { label: 'İhmal Edilmiş',   cls: 'text-red-400'  },
-    private:   { label: 'Gizli Hesap',     cls: 'text-zinc-500' },
-    unknown:   { label: 'Bilinmiyor',      cls: 'text-zinc-600' },
+    active:    { label: 'Aktif',         cls: 'text-emerald-400' },
+    dormant:   { label: 'Durgun',        cls: 'text-amber-400' },
+    neglected: { label: 'İhmal Edilmiş', cls: 'text-red-400'  },
+    private:   { label: 'Gizli Hesap',   cls: 'text-zinc-500' },
+    unknown:   { label: 'Bilinmiyor',    cls: 'text-zinc-600' },
   }
 
   return (
     <div className={`bg-[#1c1c22] border ${need.borderCls} rounded-2xl shadow-lg shadow-black/30 overflow-hidden`}>
 
-      {/* ── KATMAN 1: Her zaman görünür, en belirgin ───────────────────── */}
+      {/* ── KATMAN 1: Her zaman görünür ─────────────────────────────────── */}
       <div className="p-5 pb-4">
-
-        {/* İşletme adı + "Reklam İhtiyacı" rozeti */}
         <div className="flex items-start justify-between gap-3 mb-3">
           <div className="min-w-0">
             <div className="flex items-center gap-2 flex-wrap mb-1">
@@ -395,9 +598,7 @@ function LeadCard({ lead, rank, senderName, agencyName, agencyWebsite }: {
                 {rank}
               </span>
               <h2 className="text-base font-bold text-white leading-snug">{lead.name}</h2>
-              {type && (
-                <span className="text-[11px] text-blue-400 font-medium">{type}</span>
-              )}
+              {type && <span className="text-[11px] text-blue-400 font-medium">{type}</span>}
             </div>
             <p className="text-[11px] text-zinc-500 leading-relaxed pl-8">{lead.address}</p>
           </div>
@@ -407,7 +608,7 @@ function LeadCard({ lead, rank, senderName, agencyName, agencyWebsite }: {
           </div>
         </div>
 
-        {/* En büyük eksik — kahramanı */}
+        {/* En büyük eksik */}
         <div className="flex items-start gap-2 mb-3 pl-1">
           <span className="text-orange-400 font-black shrink-0 text-sm leading-snug mt-px">▸</span>
           <p className="text-sm font-bold text-white leading-snug">{heroGap}</p>
@@ -419,9 +620,8 @@ function LeadCard({ lead, rank, senderName, agencyName, agencyWebsite }: {
         </div>
       </div>
 
-      {/* ── KATMAN 2: Görünür ama sakin, ikincil bilgiler ──────────────── */}
+      {/* ── KATMAN 2: İkincil bilgiler ──────────────────────────────────── */}
       <div className="px-5 pt-3 pb-4 border-t border-white/[0.09]">
-
         {/* Temel künye */}
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm mb-3">
           {lead.rating !== null ? (
@@ -433,9 +633,7 @@ function LeadCard({ lead, rank, senderName, agencyName, agencyWebsite }: {
             <span className="text-zinc-600 text-xs">Puan yok</span>
           )}
           <span className="text-white/10">·</span>
-          <span className="text-xs text-zinc-500">
-            {lead.reviewCount.toLocaleString('tr-TR')} yorum
-          </span>
+          <span className="text-xs text-zinc-500">{lead.reviewCount.toLocaleString('tr-TR')} yorum</span>
           {lead.phone && (
             <>
               <span className="text-white/10">·</span>
@@ -460,7 +658,7 @@ function LeadCard({ lead, rank, senderName, agencyName, agencyWebsite }: {
         </div>
 
         {/* Hizmet öncelik etiketleri */}
-        <div className="flex flex-wrap gap-1.5">
+        <div className="flex flex-wrap gap-1.5 mb-3">
           {services.map(s => (
             <span
               key={s.label}
@@ -476,48 +674,26 @@ function LeadCard({ lead, rank, senderName, agencyName, agencyWebsite }: {
           ))}
         </div>
 
-        {/* WhatsApp butonları */}
-        {(() => {
-          const waPhone = lead.phone ? toWaPhone(lead.phone) : null
-          const btnBase = 'flex-1 text-center text-xs font-semibold px-3 py-2 rounded-lg transition-colors'
-          const shortMsg = buildShortMessage(lead, senderName, agencyName, agencyWebsite)
-          const longMsg  = buildDetailedMessage(lead, senderName, agencyName, agencyWebsite)
-          return (
-            <div className="flex gap-2 mt-3 pt-3 border-t border-white/[0.09]">
-              {waPhone ? (
-                <a
-                  href={`https://wa.me/${waPhone}?text=${encodeURIComponent(shortMsg)}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className={`${btnBase} border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10`}
-                >
-                  Kısa Mesaj
-                </a>
-              ) : (
-                <span title="Telefon numarası bulunamadı" className={`${btnBase} border border-white/[0.08] text-zinc-700 cursor-not-allowed`}>
-                  Kısa Mesaj
-                </span>
-              )}
-              {waPhone ? (
-                <a
-                  href={`https://wa.me/${waPhone}?text=${encodeURIComponent(longMsg)}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className={`${btnBase} bg-emerald-600 hover:bg-emerald-500 text-white`}
-                >
-                  Detaylı Mesaj
-                </a>
-              ) : (
-                <span title="Telefon numarası bulunamadı" className={`${btnBase} border border-white/[0.08] text-zinc-700 cursor-not-allowed`}>
-                  Detaylı Mesaj
-                </span>
-              )}
-            </div>
-          )
-        })()}
+        {/* WhatsApp mesaj butonları → önizleme modalini açar */}
+        <div className="flex gap-2 pt-3 border-t border-white/[0.09]">
+          <button
+            type="button"
+            onClick={() => onPreview('short')}
+            className="flex-1 text-center text-xs font-semibold px-3 py-2 rounded-lg border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10 transition-colors"
+          >
+            Kısa Mesaj
+          </button>
+          <button
+            type="button"
+            onClick={() => onPreview('long')}
+            className="flex-1 text-center text-xs font-bold px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white transition-colors"
+          >
+            Detaylı Mesaj
+          </button>
+        </div>
       </div>
 
-      {/* ── AÇILIR DÜĞME ───────────────────────────────────────────────── */}
+      {/* ── AÇILIR DÜĞME ────────────────────────────────────────────────── */}
       <button
         onClick={() => setExpanded(v => !v)}
         className="w-full border-t border-white/[0.08] px-5 py-2.5 text-xs text-zinc-500 hover:text-zinc-300 hover:bg-white/[0.04] flex items-center justify-center gap-1.5 transition-colors font-medium"
@@ -525,11 +701,11 @@ function LeadCard({ lead, rank, senderName, agencyName, agencyWebsite }: {
         {expanded ? 'Detayları gizle ▲' : 'Detayları gör ▼'}
       </button>
 
-      {/* ── KATMAN 3: Açılır detay (accordion) ────────────────────────── */}
+      {/* ── KATMAN 3: Açılır detay (accordion) ─────────────────────────── */}
       {expanded && (
         <div className="border-t border-white/[0.08] bg-[#17171d] divide-y divide-white/[0.06]">
 
-          {/* Web / Site — sadece sorunlu alanlar */}
+          {/* Web / Site */}
           {(() => {
             const s = lead.siteAnalysis
             const siteProblems: React.ReactNode[] = []
@@ -593,7 +769,7 @@ function LeadCard({ lead, rank, senderName, agencyName, agencyWebsite }: {
             )
           })()}
 
-          {/* Google Business — sadece sorunlu / bilgilendirici alanlar */}
+          {/* Google Business */}
           {(() => {
             const gProblems: React.ReactNode[] = []
             if (lead.googleBusinessScore < 75)
@@ -627,7 +803,7 @@ function LeadCard({ lead, rank, senderName, agencyName, agencyWebsite }: {
             )
           })()}
 
-          {/* Sosyal Medya — sadece sorunlu alanlar */}
+          {/* Sosyal Medya */}
           {(() => {
             const ig = lead.instagram
             const igProblems: React.ReactNode[] = []
@@ -644,23 +820,15 @@ function LeadCard({ lead, rank, senderName, agencyName, agencyWebsite }: {
                 igProblems.push(<Row key="freq" label="Haftalık Sıklık"><span className={`text-xs font-semibold ${ig.weeklyPostFreq < 1 ? 'text-red-400' : 'text-amber-400'}`}>{ig.weeklyPostFreq} gönderi/hafta</span></Row>)
               if (ig.usesReels === false) igProblems.push(<Row key="reel" label="Reels"><span className="text-xs font-medium text-amber-400">✕ Kullanmıyor</span></Row>)
             }
-
             const fb = lead.facebook
             const fbProblems: React.ReactNode[] = []
-            if (fb) {
-              if (fb.activity !== 'active')
-                fbProblems.push(<Row key="fbact" label="Facebook Aktivite"><span className={`text-xs font-semibold ${fb.activity === 'neglected' ? 'text-red-400' : 'text-amber-400'}`}>{fb.activity === 'neglected' ? 'İhmal Edilmiş' : 'Durgun'}</span></Row>)
-            }
-
+            if (fb && fb.activity !== 'active' && fb.activity !== 'unknown')
+              fbProblems.push(<Row key="fbact" label="Facebook Aktivite"><span className={`text-xs font-semibold ${fb.activity === 'neglected' ? 'text-red-400' : 'text-amber-400'}`}>{fb.activity === 'neglected' ? 'İhmal Edilmiş' : 'Durgun'}</span></Row>)
             const tt = lead.tiktok
             const ttProblems: React.ReactNode[] = []
-            if (tt) {
-              if (tt.activity !== 'active')
-                ttProblems.push(<Row key="ttact" label="TikTok Aktivite"><span className={`text-xs font-semibold ${tt.activity === 'neglected' ? 'text-red-400' : 'text-amber-400'}`}>{tt.activity === 'neglected' ? 'İhmal Edilmiş' : 'Durgun'}</span></Row>)
-            }
-
+            if (tt && tt.activity !== 'active')
+              ttProblems.push(<Row key="ttact" label="TikTok Aktivite"><span className={`text-xs font-semibold ${tt.activity === 'neglected' ? 'text-red-400' : 'text-amber-400'}`}>{tt.activity === 'neglected' ? 'İhmal Edilmiş' : 'Durgun'}</span></Row>)
             const allSocialProblems = igProblems.length + fbProblems.length + ttProblems.length
-
             return (
               <section className="px-5 py-4">
                 <h4 className="text-[10px] font-bold text-zinc-600 uppercase tracking-widest mb-3 flex items-center gap-2">
@@ -668,7 +836,7 @@ function LeadCard({ lead, rank, senderName, agencyName, agencyWebsite }: {
                   {allSocialProblems > 0 && <span className="text-red-400">({allSocialProblems} sorun)</span>}
                 </h4>
                 <dl className="space-y-2">
-                  {lead.instagramHandle && (
+                  {lead.instagramHandle ? (
                     <Row label="Instagram">
                       <span className="flex items-center gap-1.5 flex-wrap">
                         <a href={`https://instagram.com/${lead.instagramHandle}`} target="_blank" rel="noopener noreferrer" className="text-xs font-semibold text-pink-400 hover:underline">@{lead.instagramHandle}</a>
@@ -676,11 +844,11 @@ function LeadCard({ lead, rank, senderName, agencyName, agencyWebsite }: {
                         {ig?.followersCount != null && <span className="text-xs text-zinc-500">{formatCount(ig.followersCount)} takipçi</span>}
                       </span>
                     </Row>
+                  ) : (
+                    <Row label="Instagram"><span className="text-xs text-red-400 font-medium">✕ Tespit edilemedi</span></Row>
                   )}
-                  {!lead.instagramHandle && <Row key="no-ig" label="Instagram"><span className="text-xs text-red-400 font-medium">✕ Tespit edilemedi</span></Row>}
                   {igProblems}
-
-                  {fb && (
+                  {fb ? (
                     <Row label="Facebook">
                       <span className="flex items-center gap-1.5 flex-wrap">
                         <a href={fb.pageUrl} target="_blank" rel="noopener noreferrer" className="text-xs font-semibold text-blue-400 hover:underline">{fb.handle}</a>
@@ -688,11 +856,11 @@ function LeadCard({ lead, rank, senderName, agencyName, agencyWebsite }: {
                         {fb.followersCount != null && <span className="text-xs text-zinc-500">{formatCount(fb.followersCount)} takipçi</span>}
                       </span>
                     </Row>
+                  ) : (
+                    <Row label="Facebook"><span className="text-xs text-red-400 font-medium">✕ Tespit edilemedi</span></Row>
                   )}
-                  {!fb && <Row key="no-fb" label="Facebook"><span className="text-xs text-red-400 font-medium">✕ Tespit edilemedi</span></Row>}
                   {fbProblems}
-
-                  {tt && (
+                  {tt ? (
                     <Row label="TikTok">
                       <span className="flex items-center gap-1.5 flex-wrap">
                         <a href={`https://tiktok.com/@${tt.handle}`} target="_blank" rel="noopener noreferrer" className="text-xs font-semibold text-zinc-300 hover:underline">@{tt.handle}</a>
@@ -700,10 +868,10 @@ function LeadCard({ lead, rank, senderName, agencyName, agencyWebsite }: {
                         {tt.followersCount != null && <span className="text-xs text-zinc-500">{formatCount(tt.followersCount)} takipçi</span>}
                       </span>
                     </Row>
+                  ) : (
+                    <Row label="TikTok"><span className="text-xs text-zinc-600">Tespit edilemedi</span></Row>
                   )}
-                  {!tt && <Row key="no-tt" label="TikTok"><span className="text-xs text-zinc-600">Tespit edilemedi</span></Row>}
                   {ttProblems}
-
                   {lead.metaAds && (
                     <Row label="Meta Reklamlar">
                       {lead.metaAds.hasActiveAds ? (
@@ -723,7 +891,7 @@ function LeadCard({ lead, rank, senderName, agencyName, agencyWebsite }: {
             )
           })()}
 
-          {/* Platformlar — sadece eksik olanlar */}
+          {/* Platformlar */}
           {lead.platforms && (() => {
             const plat = lead.platforms
             const platProblems: React.ReactNode[] = []
@@ -734,7 +902,6 @@ function LeadCard({ lead, rank, senderName, agencyName, agencyWebsite }: {
             if (plat.bookingPlatform === false) platProblems.push(<Row key="bp" label="Online Randevu"><span className="text-xs font-medium text-red-400">✕ Listelenmemiş</span></Row>)
             if (!plat.inLocalPack) platProblems.push(<Row key="lp" label="Google 3-Paketi"><span className="text-xs font-medium text-red-400">✕ Görünmüyor</span></Row>)
             if (!plat.youtubeHandle && !lead.youtubeHandle) platProblems.push(<Row key="yt" label="YouTube"><span className="text-xs font-medium text-amber-400">✕ Tespit edilemedi</span></Row>)
-
             return (
               <section className="px-5 py-4">
                 <h4 className="text-[10px] font-bold text-zinc-600 uppercase tracking-widest mb-3 flex items-center gap-2">
@@ -766,12 +933,9 @@ function LeadCard({ lead, rank, senderName, agencyName, agencyWebsite }: {
               <ScoreBar label="Ödeme Gücü"   value={lead.odemeGucu}   color="bg-blue-500" />
               <ScoreBar label="Açık Şiddeti" value={lead.acikSiddeti} color="bg-orange-500" />
             </div>
-
             {restGaps.length > 0 && (
               <>
-                <h5 className="text-[10px] font-bold text-zinc-600 uppercase tracking-widest mb-2">
-                  Diğer Eksikler
-                </h5>
+                <h5 className="text-[10px] font-bold text-zinc-600 uppercase tracking-widest mb-2">Diğer Eksikler</h5>
                 <ul className="space-y-1.5">
                   {(showAllGaps ? restGaps : restGaps.slice(0, 5)).map((gap, i) => (
                     <li key={i} className="flex items-start gap-1.5 text-xs text-zinc-400">
@@ -791,26 +955,38 @@ function LeadCard({ lead, rank, senderName, agencyName, agencyWebsite }: {
               </>
             )}
           </section>
-
         </div>
       )}
     </div>
   )
 }
 
-// ─── Yükleniyor göstergesi ────────────────────────────────────────────────────
+// ─── Aşamalı yükleniyor göstergesi ───────────────────────────────────────────
 
-function LoadingSpinner() {
+function ProgressLoader({ step }: { step: number }) {
+  const current = LOADING_STEPS[Math.min(step, LOADING_STEPS.length - 1)]
   return (
-    <div className="flex flex-col items-center justify-center py-16 gap-4">
-      <div className="relative h-10 w-10">
+    <div className="flex flex-col items-center justify-center py-16 gap-5">
+      <div className="relative h-12 w-12">
         <div className="absolute inset-0 rounded-full border-4 border-white/10" />
         <div className="absolute inset-0 rounded-full border-4 border-blue-500 border-r-transparent animate-spin" />
       </div>
       <div className="text-center">
-        <p className="text-sm font-medium text-zinc-300">İşletmeler analiz ediliyor…</p>
-        <p className="text-xs text-zinc-500 mt-1">Google Places + site performansı paralel çekiliyor</p>
+        <p className="text-sm font-semibold text-zinc-200">{current.text}</p>
+        <p className="text-xs text-zinc-600 mt-1">{current.sub}</p>
       </div>
+      {/* İlerleme nokta barı */}
+      <div className="flex items-center gap-2">
+        {LOADING_STEPS.map((_, i) => (
+          <div
+            key={i}
+            className={`h-1.5 rounded-full transition-all duration-500 ${
+              i < step ? 'w-4 bg-blue-500' : i === step ? 'w-6 bg-blue-400' : 'w-1.5 bg-white/10'
+            }`}
+          />
+        ))}
+      </div>
+      <p className="text-[11px] text-zinc-700">Bu işlem ~30–60 saniye sürebilir</p>
     </div>
   )
 }
@@ -911,45 +1087,92 @@ const SECTOR_GROUPS: { label: string; options: { label: string; search: string }
 
 // ─── Ortak input/select sınıfları ─────────────────────────────────────────────
 
-const inputCls = 'w-full bg-white/[0.07] border border-white/[0.12] text-white rounded-xl px-3 py-2.5 text-sm placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500/40 transition'
+const inputCls  = 'w-full bg-white/[0.07] border border-white/[0.12] text-white rounded-xl px-3 py-2.5 text-sm placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500/40 transition'
 const selectCls = 'w-full bg-white/[0.07] border border-white/[0.12] text-white rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500/40 appearance-none cursor-pointer transition'
-const labelCls = 'block text-[10px] text-zinc-500 uppercase tracking-widest mb-1.5'
+const labelCls  = 'block text-[10px] text-zinc-500 uppercase tracking-widest mb-1.5'
 
-// ─── Analiz Sayfası ────────────────────────────────────────────────────────────
+// ─── Analiz Sayfası ───────────────────────────────────────────────────────────
 
 export default function AnalizPage() {
-  const [searchMode, setSearchMode]       = useState<'bulk' | 'single'>('bulk')
-  const [businessQuery, setBusinessQuery] = useState('')
-  const [sector, setSector]         = useState('')
-  const [selectedIl, setSelectedIl] = useState('')
-  const [selectedIlce, setSelectedIlce] = useState('')
-  const [leads, setLeads]           = useState<Lead[]>([])
-  const [loading, setLoading]       = useState(false)
-  const [error, setError]           = useState<string | null>(null)
-  const [searched, setSearched]     = useState(false)
-  const [senderName, setSenderName]     = useState('')
-  const [agencyName, setAgencyName]     = useState('')
-  const [agencyWebsite, setAgencyWebsite] = useState('')
+  const [searchMode, setSearchMode]         = useState<'bulk' | 'single'>('bulk')
+  const [businessQuery, setBusinessQuery]   = useState('')
+  const [sector, setSector]                 = useState('')
+  const [selectedIl, setSelectedIl]         = useState('')
+  const [selectedIlce, setSelectedIlce]     = useState('')
+  const [cityDisplayValue, setCityDisplayValue] = useState('')
 
-  function handleIlChange(il: string) {
+  // Sonuçlar
+  const [leads, setLeads]       = useState<Lead[]>([])
+  const [loading, setLoading]   = useState(false)
+  const [loadingStep, setLoadingStep] = useState(0)
+  const [error, setError]       = useState<string | null>(null)
+  const [searched, setSearched] = useState(false)
+
+  // Filtre
+  const [filter, setFilter] = useState<'all' | 'high' | 'mid' | 'low'>('all')
+
+  // Mesaj önizleme
+  const [previewLead, setPreviewLead]   = useState<Lead | null>(null)
+  const [previewType, setPreviewType]   = useState<'short' | 'long'>('short')
+
+  // Mesaj ayarları
+  const [senderName, setSenderName]         = useState('')
+  const [agencyName, setAgencyName]         = useState('')
+  const [agencyWebsite, setAgencyWebsite]   = useState('')
+  const [senderOpen, setSenderOpen]         = useState(false)
+
+  // ── localStorage: yükle ──
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('lb_sender')
+      if (raw) {
+        const saved = JSON.parse(raw) as { name?: string; agency?: string; website?: string }
+        if (saved.name)    setSenderName(saved.name)
+        if (saved.agency)  setAgencyName(saved.agency)
+        if (saved.website) setAgencyWebsite(saved.website)
+      } else {
+        setSenderOpen(true) // İlk ziyarette aç
+      }
+    } catch { /* ignore */ }
+  }, [])
+
+  // ── localStorage: kaydet ──
+  useEffect(() => {
+    try {
+      localStorage.setItem('lb_sender', JSON.stringify({
+        name: senderName, agency: agencyName, website: agencyWebsite,
+      }))
+    } catch { /* ignore */ }
+  }, [senderName, agencyName, agencyWebsite])
+
+  // ── Aşamalı yükleniyor adımı ──
+  useEffect(() => {
+    if (!loading) { setLoadingStep(0); return }
+    const id = setInterval(() => {
+      setLoadingStep(s => Math.min(s + 1, LOADING_STEPS.length - 1))
+    }, 9_000)
+    return () => clearInterval(id)
+  }, [loading])
+
+  function handleCityChange(il: string, ilce: string) {
     setSelectedIl(il)
-    setSelectedIlce('')
+    setSelectedIlce(ilce)
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (loading) return
-
     setLoading(true)
     setError(null)
     setLeads([])
     setSearched(false)
+    setFilter('all')
 
     try {
       const url = searchMode === 'single'
         ? `/api/analyze?businessName=${encodeURIComponent(businessQuery.trim())}&sector=${encodeURIComponent(sector.trim())}${selectedIl ? '&city=' + encodeURIComponent(selectedIl) : ''}`
         : `/api/analyze?sector=${encodeURIComponent(sector.trim())}&city=${encodeURIComponent(`${selectedIlce} ${selectedIl}`)}`
-      const res = await fetch(url)
+      const res  = await fetch(url)
       const data = await res.json()
       if (!res.ok) setError(data.error ?? 'Beklenmeyen bir hata oluştu.')
       else { setLeads(data.leads); setSearched(true) }
@@ -965,192 +1188,223 @@ export default function AnalizPage() {
       ? businessQuery.trim().length >= 2 && sector.trim().length > 0
       : sector.trim().length > 0 && selectedIl.length > 0 && selectedIlce.length > 0
   )
-  const ilceler = selectedIl ? IL_ILCE[selectedIl] : []
+
+  // Filtrelenmiş sonuçlar
+  const filteredLeads = filter === 'all' ? leads
+    : filter === 'high' ? leads.filter(l => l.score >= 70)
+    : filter === 'mid'  ? leads.filter(l => l.score >= 40 && l.score < 70)
+    : leads.filter(l => l.score < 40)
+
+  const countByLevel = (min: number, max: number) =>
+    leads.filter(l => l.score >= min && l.score < max).length
 
   return (
     <div className="min-h-screen bg-[#111115] text-white">
       <Navbar />
 
+      {/* Mesaj önizleme modalı */}
+      {previewLead && (
+        <MessagePreviewModal
+          lead={previewLead}
+          senderName={senderName}
+          agencyName={agencyName}
+          agencyWebsite={agencyWebsite}
+          initialType={previewType}
+          onClose={() => setPreviewLead(null)}
+        />
+      )}
+
       <div className="max-w-2xl mx-auto px-4 pt-14 pb-12">
 
         {/* Hero */}
-        <div className="text-center mb-10 pt-12">
-          <h1 className="text-4xl sm:text-5xl font-black text-white tracking-tight">
+        <div className="text-center mb-8 pt-10">
+          <h1 className="text-3xl sm:text-4xl font-black text-white tracking-tight">
             Lead Fırsat Ajanı
           </h1>
-          <p className="text-zinc-500 text-sm mt-3 max-w-sm mx-auto">
-            Sektör ve ilçe gir — Google + site analizi ile derin fırsat raporu oluştur.
-          </p>
-          <p className="text-[11px] text-zinc-600 mt-4">
-            · Google Places · Site Analizi · Sosyal Medya
+          <p className="text-zinc-500 text-sm mt-2 max-w-sm mx-auto">
+            Sektör ve ilçe gir — 58 sinyal ile derin fırsat raporu oluştur.
           </p>
         </div>
 
         {/* Form Kartı */}
-        <form onSubmit={handleSubmit} className="bg-[#1c1c22] border border-white/[0.12] rounded-2xl p-6 shadow-2xl shadow-black/40 space-y-4">
+        <form onSubmit={handleSubmit} className="bg-[#1c1c22] border border-white/[0.12] rounded-2xl p-5 shadow-2xl shadow-black/40 space-y-4">
 
-          {/* Mode toggle */}
-          <div className="flex rounded-xl bg-white/[0.08] p-1 mb-2">
-            <button type="button" onClick={() => setSearchMode('bulk')}
+          {/* Mod toggle */}
+          <div className="flex rounded-xl bg-white/[0.08] p-1">
+            <button
+              type="button"
+              onClick={() => setSearchMode('bulk')}
               className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
-                searchMode === 'bulk'
-                  ? 'bg-white/10 text-white shadow-sm'
-                  : 'text-zinc-500 hover:text-zinc-300'
-              }`}>
+                searchMode === 'bulk' ? 'bg-white/10 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'
+              }`}
+            >
               Bölge Tara
             </button>
-            <button type="button" onClick={() => setSearchMode('single')}
+            <button
+              type="button"
+              onClick={() => setSearchMode('single')}
               className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
-                searchMode === 'single'
-                  ? 'bg-white/10 text-white shadow-sm'
-                  : 'text-zinc-500 hover:text-zinc-300'
-              }`}>
+                searchMode === 'single' ? 'bg-white/10 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'
+              }`}
+            >
               İşletme Ara
             </button>
           </div>
 
-          {/* Bölge Tara modu */}
-          {searchMode === 'bulk' && (
-            <>
-              <div>
-                <label className={labelCls}>Sektör</label>
-                <select
-                  value={sector}
-                  onChange={(e) => setSector(e.target.value)}
-                  className={selectCls}
+          {/* ── Sektör + hızlı chip'ler ── */}
+          <div>
+            <label className={labelCls}>Sektör</label>
+            {/* Popüler sektör chip'leri */}
+            <div className="flex flex-wrap gap-1.5 mb-2">
+              {POPULAR_SECTORS.map(ps => (
+                <button
+                  key={ps.search}
+                  type="button"
+                  onClick={() => setSector(ps.search)}
+                  className={`text-[11px] px-2.5 py-1 rounded-full border font-medium transition-colors ${
+                    sector === ps.search
+                      ? 'bg-blue-500/20 border-blue-500/40 text-blue-300'
+                      : 'bg-white/[0.04] border-white/[0.08] text-zinc-500 hover:text-zinc-300 hover:border-white/20'
+                  }`}
                 >
-                  <option value="">Sektör seçin…</option>
-                  {SECTOR_GROUPS.map(group => (
-                    <optgroup key={group.label} label={group.label}>
-                      {group.options.map(opt => (
-                        <option key={opt.search} value={opt.search}>{opt.label}</option>
-                      ))}
-                    </optgroup>
+                  {ps.label}
+                </button>
+              ))}
+            </div>
+            <select
+              value={sector}
+              onChange={e => setSector(e.target.value)}
+              className={selectCls}
+            >
+              <option value="">Tümünü gör…</option>
+              {SECTOR_GROUPS.map(group => (
+                <optgroup key={group.label} label={group.label}>
+                  {group.options.map(opt => (
+                    <option key={opt.search} value={opt.search}>{opt.label}</option>
                   ))}
-                </select>
-              </div>
+                </optgroup>
+              ))}
+            </select>
+          </div>
 
-              <div className="flex gap-3">
-                <div className="flex-1">
-                  <label className={labelCls}>İl</label>
-                  <select
-                    value={selectedIl}
-                    onChange={(e) => handleIlChange(e.target.value)}
-                    className={selectCls}
-                  >
-                    <option value="">İl seçin…</option>
-                    {ILLER.map(il => <option key={il} value={il}>{il}</option>)}
-                  </select>
-                </div>
-                <div className="flex-1">
-                  <label className={labelCls}>İlçe</label>
-                  <select
-                    value={selectedIlce}
-                    onChange={(e) => setSelectedIlce(e.target.value)}
-                    disabled={!selectedIl}
-                    className={`${selectCls} disabled:opacity-30 disabled:cursor-not-allowed`}
-                  >
-                    <option value="">{selectedIl ? 'İlçe seçin…' : 'Önce il seçin'}</option>
-                    {ilceler.map(ilce => <option key={ilce} value={ilce}>{ilce}</option>)}
-                  </select>
-                </div>
-              </div>
-            </>
+          {/* ── Bölge Tara: şehir autocomplete ── */}
+          {searchMode === 'bulk' && (
+            <div>
+              <label className={labelCls}>İlçe / Şehir</label>
+              <CityAutocomplete
+                value={cityDisplayValue}
+                onChange={(il, ilce) => {
+                  handleCityChange(il, ilce)
+                  setCityDisplayValue(il && ilce ? `${ilce}, ${il}` : '')
+                }}
+              />
+              {selectedIl && selectedIlce && (
+                <p className="text-[11px] text-zinc-600 mt-1.5">
+                  Seçildi: <span className="text-zinc-400">{selectedIlce}, {selectedIl}</span>
+                </p>
+              )}
+            </div>
           )}
 
-          {/* İşletme Ara modu */}
+          {/* ── İşletme Ara: işletme adı + şehir ── */}
           {searchMode === 'single' && (
             <>
               <div>
                 <label className={labelCls}>İşletme Adı</label>
                 <input
                   type="text"
-                  placeholder="İşletme adı (örn: Kafe Luna, Dr. Ahmet Yıldız)"
+                  placeholder="Kafe Luna, Dr. Ahmet Yıldız…"
                   value={businessQuery}
                   onChange={e => setBusinessQuery(e.target.value)}
                   className={inputCls}
                 />
               </div>
-
-              <div>
-                <label className={labelCls}>Sektör</label>
-                <select
-                  value={sector}
-                  onChange={(e) => setSector(e.target.value)}
-                  className={selectCls}
-                >
-                  <option value="">Sektör seçin…</option>
-                  {SECTOR_GROUPS.map(group => (
-                    <optgroup key={group.label} label={group.label}>
-                      {group.options.map(opt => (
-                        <option key={opt.search} value={opt.search}>{opt.label}</option>
-                      ))}
-                    </optgroup>
-                  ))}
-                </select>
-              </div>
-
               <div>
                 <label className={labelCls}>Şehir (opsiyonel)</label>
                 <select
                   value={selectedIl}
-                  onChange={(e) => setSelectedIl(e.target.value)}
+                  onChange={e => setSelectedIl(e.target.value)}
                   className={selectCls}
                 >
-                  <option value="">Şehir seçin (opsiyonel)</option>
+                  <option value="">Şehir seçin</option>
                   {ILLER.map(il => <option key={il} value={il}>{il}</option>)}
                 </select>
               </div>
             </>
           )}
 
-          <div className="flex gap-3">
-            <div className="flex-1">
-              <label className={labelCls}>Adınız</label>
-              <input
-                type="text"
-                placeholder="Canan Özdoğru"
-                value={senderName}
-                onChange={e => setSenderName(e.target.value)}
-                className={inputCls}
-              />
-            </div>
-            <div className="flex-1">
-              <label className={labelCls}>Ajans Adınız</label>
-              <input
-                type="text"
-                placeholder="Dijitalpazarlamacım"
-                value={agencyName}
-                onChange={e => setAgencyName(e.target.value)}
-                className={inputCls}
-              />
-            </div>
-          </div>
-
-          <div>
-            <label className={labelCls}>Ajans Web Siteniz</label>
-            <input
-              type="text"
-              placeholder="www.dijitalpazarlamacim.com"
-              value={agencyWebsite}
-              onChange={e => setAgencyWebsite(e.target.value)}
-              className={inputCls}
-            />
-          </div>
-
-          <div className="flex justify-end pt-1">
+          {/* ── Mesaj Ayarları (katlanabilir) ── */}
+          <div className="border border-white/[0.08] rounded-xl overflow-hidden">
             <button
-              type="submit"
-              disabled={!canSubmit}
-              className={`bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-xl px-8 py-2.5 text-sm transition-colors ${!canSubmit ? 'opacity-25 cursor-not-allowed' : ''}`}
+              type="button"
+              onClick={() => setSenderOpen(v => !v)}
+              className="w-full flex items-center justify-between px-4 py-3 hover:bg-white/[0.04] transition-colors"
             >
-              {loading ? 'Analiz ediliyor…' : 'Analiz Et'}
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="text-[11px] text-zinc-500 uppercase tracking-widest font-bold shrink-0">Mesaj Ayarları</span>
+                {(senderName || agencyName) && !senderOpen && (
+                  <span className="text-xs text-zinc-600 truncate">
+                    · {[senderName, agencyName].filter(Boolean).join(', ')}
+                  </span>
+                )}
+              </div>
+              <span className="text-zinc-600 text-[10px] ml-2 shrink-0">{senderOpen ? '▲' : '▼'}</span>
             </button>
+            {senderOpen && (
+              <div className="border-t border-white/[0.08] px-4 py-4 space-y-3">
+                <p className="text-[11px] text-zinc-600">WhatsApp mesajlarına eklenecek bilgiler. Bir kez doldurman yeterli.</p>
+                <div className="flex gap-3">
+                  <div className="flex-1">
+                    <label className={labelCls}>Adınız</label>
+                    <input
+                      type="text"
+                      placeholder="Canan Özdoğru"
+                      value={senderName}
+                      onChange={e => setSenderName(e.target.value)}
+                      className={inputCls}
+                    />
+                  </div>
+                  <div className="flex-1">
+                    <label className={labelCls}>Ajans Adı</label>
+                    <input
+                      type="text"
+                      placeholder="Dijital Medya"
+                      value={agencyName}
+                      onChange={e => setAgencyName(e.target.value)}
+                      className={inputCls}
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className={labelCls}>Ajans Web Sitesi</label>
+                  <input
+                    type="text"
+                    placeholder="www.ajansiniz.com"
+                    value={agencyWebsite}
+                    onChange={e => setAgencyWebsite(e.target.value)}
+                    className={inputCls}
+                  />
+                </div>
+              </div>
+            )}
           </div>
+
+          {/* ── Submit ── */}
+          <button
+            type="submit"
+            disabled={!canSubmit}
+            className={`w-full bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl py-3 text-sm transition-colors ${
+              !canSubmit ? 'opacity-25 cursor-not-allowed' : ''
+            }`}
+          >
+            {loading ? 'Analiz ediliyor…' : 'Analiz Et →'}
+          </button>
         </form>
 
-        {loading && <LoadingSpinner />}
+        {/* Yükleniyor */}
+        {loading && <ProgressLoader step={loadingStep} />}
 
+        {/* Hata */}
         {error && !loading && (
           <div className="mt-6 rounded-xl border border-red-500/20 bg-red-500/10 px-5 py-4">
             <p className="text-sm font-semibold text-red-400">Hata</p>
@@ -1158,6 +1412,7 @@ export default function AnalizPage() {
           </div>
         )}
 
+        {/* Boş sonuç */}
         {searched && leads.length === 0 && !loading && !error && (
           <div className="mt-8 rounded-xl border border-white/[0.07] bg-white/[0.02] px-5 py-8 text-center">
             <p className="text-zinc-500 text-sm">Bu arama için sonuç bulunamadı.</p>
@@ -1165,41 +1420,60 @@ export default function AnalizPage() {
           </div>
         )}
 
+        {/* Sonuçlar */}
         {leads.length > 0 && !loading && (
           <div className="mt-8">
-            {/* Özet çubuk */}
-            <div className="bg-white/[0.05] border border-white/[0.10] rounded-xl px-4 py-2.5 flex items-center justify-between mb-5">
-              <p className="text-zinc-400 text-sm">
+
+            {/* Özet + filtre */}
+            <div className="bg-white/[0.04] border border-white/[0.09] rounded-xl px-4 py-3 flex flex-col sm:flex-row sm:items-center gap-3 mb-5">
+              <p className="text-zinc-400 text-sm flex-1 min-w-0">
                 {searchMode === 'single'
                   ? <><span className="text-white font-semibold">&ldquo;{businessQuery}&rdquo;</span>{' '}analiz sonucu</>
                   : <><span className="text-white font-semibold">{leads.length} işletme</span>{' '}— reklam ihtiyacına göre sıralandı</>
                 }
               </p>
-              <div className="flex items-center gap-2 text-xs text-zinc-500">
-                <span>
-                  IG:{' '}
-                  <span className="text-blue-400 font-semibold">
-                    {leads.filter(l => l.instagramHandle).length}/{leads.length}
-                  </span>
-                </span>
-                <span className="text-white/10">|</span>
-                <span>
-                  Meta:{' '}
-                  <span className="text-blue-400 font-semibold">
-                    {leads.filter(l => l.metaAds?.totalAdCount).length}/{leads.length}
-                  </span>
-                </span>
+              <div className="flex gap-1.5 shrink-0">
+                {([
+                  { key: 'all',  label: 'Tümü', count: leads.length, cls: 'text-zinc-300 border-white/15 bg-white/[0.06]', inactCls: 'text-zinc-600 border-white/[0.06]' },
+                  { key: 'high', label: 'Yüksek', count: countByLevel(70, 101), cls: 'text-red-400 border-red-500/30 bg-red-500/10', inactCls: 'text-zinc-600 border-white/[0.06]' },
+                  { key: 'mid',  label: 'Orta',   count: countByLevel(40, 70),  cls: 'text-amber-400 border-amber-500/30 bg-amber-500/10', inactCls: 'text-zinc-600 border-white/[0.06]' },
+                  { key: 'low',  label: 'Düşük',  count: countByLevel(0, 40),   cls: 'text-zinc-400 border-white/15 bg-white/[0.05]', inactCls: 'text-zinc-600 border-white/[0.06]' },
+                ] as const).map(f => (
+                  <button
+                    key={f.key}
+                    onClick={() => setFilter(f.key)}
+                    className={`text-[11px] px-2.5 py-1 rounded-full border font-semibold transition-colors ${
+                      filter === f.key ? f.cls : f.inactCls + ' hover:text-zinc-400'
+                    }`}
+                  >
+                    {f.label}{f.key !== 'all' && ` (${f.count})`}
+                  </button>
+                ))}
               </div>
             </div>
 
+            {filteredLeads.length === 0 && (
+              <div className="rounded-xl border border-white/[0.07] bg-white/[0.02] px-5 py-6 text-center mb-4">
+                <p className="text-zinc-500 text-sm">Bu kategoride işletme yok.</p>
+              </div>
+            )}
+
             <div className="space-y-4">
-              {leads.map((lead, i) => (
-                <LeadCard key={`${lead.name}-${lead.address}`} lead={lead} rank={i + 1} senderName={senderName} agencyName={agencyName} agencyWebsite={agencyWebsite} />
+              {filteredLeads.map(lead => (
+                <LeadCard
+                  key={`${lead.name}-${lead.address}`}
+                  lead={lead}
+                  rank={leads.indexOf(lead) + 1}
+                  senderName={senderName}
+                  agencyName={agencyName}
+                  agencyWebsite={agencyWebsite}
+                  onPreview={type => { setPreviewLead(lead); setPreviewType(type) }}
+                />
               ))}
             </div>
 
             <p className="text-xs text-zinc-700 text-center mt-6 pb-8">
-              Veriler Google Places API'den anlık çekilmiştir ve saklanmamaktadır.
+              Veriler Google Places API&apos;den anlık çekilmiştir ve saklanmamaktadır.
             </p>
           </div>
         )}
