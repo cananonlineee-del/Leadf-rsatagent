@@ -559,6 +559,29 @@ async function fetchMobileScore(siteUrl: string, apiKey: string): Promise<number
   }
 }
 
+/**
+ * Google Places'ten gelen websiteUri'nin gerçek bir web sitesi olup olmadığını kontrol eder.
+ * WhatsApp, sosyal medya ve link-in-bio servisleri elenecek; domain araması yapılacak.
+ */
+function isRealWebsite(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.replace(/^www\./, '').toLowerCase()
+    const BLOCKED_HOSTS = new Set([
+      'api.whatsapp.com', 'wa.me',
+      'facebook.com', 'm.facebook.com',
+      'instagram.com',
+      'tiktok.com', 'vm.tiktok.com',
+      'twitter.com', 'x.com',
+      'youtube.com', 'youtu.be',
+      'linkedin.com',
+      'linktr.ee', 'taplink.cc', 'bio.link', 'beacons.ai',
+    ])
+    return !BLOCKED_HOSTS.has(host) && !Array.from(BLOCKED_HOSTS).some(b => host.endsWith('.' + b))
+  } catch {
+    return false
+  }
+}
+
 async function analyzeSite(websiteUri: string, apiKey: string): Promise<SiteAnalysis> {
   const ssl = websiteUri.startsWith('https://')
   const [html, mobileScore] = await Promise.all([
@@ -2382,8 +2405,14 @@ export async function GET(request: NextRequest) {
     finalists.map(async ({ c, s }) => {
       const details = await fetchPlaceDetails(c.placeId, apiKey)
 
-      // Website kaynağını belirle
-      let resolvedWebsiteUrl: string | null = details.websiteUri ?? null
+      // Website kaynağını belirle (WhatsApp / sosyal medya URL'leri elenip domain tahminine geçilir)
+      const googleUri = details.websiteUri ?? null
+      const googleUriIsReal = googleUri ? isRealWebsite(googleUri) : false
+      if (googleUri && !googleUriIsReal) {
+        console.log(`[WEBSITE] "${c.name}" → Google URI elendi (sosyal medya/mesajlaşma): ${googleUri}`)
+      }
+
+      let resolvedWebsiteUrl: string | null = googleUriIsReal ? googleUri : null
       let websiteSource: 'google' | 'discovered' | 'none'
 
       if (resolvedWebsiteUrl) {
