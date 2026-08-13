@@ -38,7 +38,10 @@ export interface SiteAnalysis {
   ssl: boolean
   mobileScore: number | null
   hasPixel: boolean
+  /** Gerçek Google Ads dönüşüm/yeniden pazarlama kodu (AW-, googleadservices, Ad Manager) */
   hasGoogleAds: boolean
+  /** Google Analytics (GA4 G-ID, UA-ID, analytics.js) — reklam değil, ölçüm */
+  hasAnalytics: boolean
   hasSocialLinks: boolean
   instagramHandle: string | null
   emailAddress: string | null
@@ -402,6 +405,20 @@ function normalizeDomainSlug(name: string): string {
     .replace(/[^a-z0-9]/g, '')
 }
 
+/** "Güzel Saç Kuaför" → "guzel-sac-kuafor" (tire'li versiyon) */
+function normalizeDomainSlugHyphenated(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[ıİ]/g, 'i')
+    .replace(/[şŞ]/g, 's')
+    .replace(/[ğĞ]/g, 'g')
+    .replace(/[üÜ]/g, 'u')
+    .replace(/[öÖ]/g, 'o')
+    .replace(/[çÇ]/g, 'c')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+}
+
 async function checkUrl(url: string): Promise<string | null> {
   const ctrl = new AbortController()
   const timer = setTimeout(() => ctrl.abort(), 5_000)
@@ -423,11 +440,26 @@ async function checkUrl(url: string): Promise<string | null> {
 async function guessAndCheckDomain(name: string): Promise<string | null> {
   const slug = normalizeDomainSlug(name)
   if (slug.length < 3) return null
-  const [comTr, com] = await Promise.all([
-    checkUrl(`https://${slug}.com.tr`),
-    checkUrl(`https://${slug}.com`),
-  ])
-  return comTr ?? com
+  const hyphen = normalizeDomainSlugHyphenated(name)
+
+  // Tüm varyasyonları paralel kontrol et
+  const candidates: string[] = [
+    `https://${slug}.com.tr`,
+    `https://${slug}.com`,
+    `https://${slug}.net.tr`,
+    `https://${slug}.net`,
+  ]
+  // Tire'li slug concat ile aynıysa (tek kelime) tekrar ekleme
+  if (hyphen !== slug) {
+    candidates.push(
+      `https://${hyphen}.com.tr`,
+      `https://${hyphen}.com`,
+      `https://${hyphen}.net.tr`,
+    )
+  }
+
+  const results = await Promise.all(candidates.map(checkUrl))
+  return results.find(r => r !== null) ?? null
 }
 
 /**
@@ -583,11 +615,12 @@ function isRealWebsite(url: string): boolean {
 }
 
 async function analyzeSite(websiteUri: string, apiKey: string): Promise<SiteAnalysis> {
-  const ssl = websiteUri.startsWith('https://')
   const [html, mobileScore] = await Promise.all([
     fetchSiteHtml(websiteUri),
     fetchMobileScore(websiteUri, apiKey),
   ])
+  // SSL: URL https ile başlıyor VE sayfa HTML döndürdü (boş = sertifika hatası)
+  const ssl = websiteUri.startsWith('https://') && html.length > 0
   const { emailAddress, hasCorpEmail } = extractEmailFromHtml(html)
   const pageTitleMatch = html.match(/<title[^>]*>([^<]*)<\/title>/i)
   const pageTitle = pageTitleMatch ? (pageTitleMatch[1].trim() || null) : null
@@ -604,7 +637,10 @@ async function analyzeSite(websiteUri: string, apiKey: string): Promise<SiteAnal
     ssl,
     mobileScore,
     hasPixel: /fbevents\.js|connect\.facebook\.net\/[a-z_]+\/fbevents|fbq\s*\(['"](?:track|init|trackCustom)/.test(html),
-    hasGoogleAds: /google-analytics\.com|gtag\s*\(|googletag\.pubads|googleadservices\.com|["'](?:AW-|UA-)\d/.test(html),
+    // Gerçek Google Ads: dönüşüm ID (AW-), Google Ad Manager (pubads), Ads piksel (googleadservices)
+    hasGoogleAds: /googleadservices\.com|googletag\.pubads\(\)|["']AW-\d{6,}["']/.test(html),
+    // Google Analytics: GA4 ölçüm ID (G-), Universal Analytics (UA-), analytics.js
+    hasAnalytics: /google-analytics\.com\/analytics\.js|["']G-[A-Z0-9]{6,}["']|["']UA-\d{4,}-\d/.test(html),
     hasSocialLinks: /href=["']https?:\/\/(?:www\.)?(?:instagram\.com|facebook\.com|twitter\.com|x\.com|tiktok\.com|linkedin\.com)/.test(html),
     instagramHandle: extractInstagramHandle(html),
     emailAddress,
@@ -612,7 +648,8 @@ async function analyzeSite(websiteUri: string, apiKey: string): Promise<SiteAnal
     hasWhatsApp: /wa\.me\/|api\.whatsapp\.com\/send/.test(html),
     hasClickablePhone: /href=["']tel:/i.test(html),
     hasBookingSystem: /planity|fresha|treatwell|calendly|setmore|doktortakvimi|bookamat|randevu\.com|simplybook|bookeo|acuityscheduling|appointy|mindbody|phorest|salonized|timely\.app|rezervasyon/i.test(html),
-    hasContactForm: /<form[\s\S]*?(?:input|textarea)/i.test(html),
+    // İletişim formu: "iletisim", "contact", "mesaj" içeren form veya textarea + submit kombinasyonu
+    hasContactForm: /<form[^>]*(?:contact|iletisim|mesaj|form)[^>]*>[\s\S]{0,3000}?(?:textarea|<input[^>]*type=["'](?:text|email|tel))/i.test(html),
     hasLocalBusinessSchema: /"@type"\s*:\s*["']LocalBusiness["']/.test(html),
     pageTitle,
     hasMetaDesc: /<meta\s[^>]*name=["']description["'][^>]*content=["']([^"']{10,})/i.test(html),
@@ -788,6 +825,22 @@ function parseLastPostDateFromSnippet(text: string): string | null {
 
   if (/\byesterday\b/i.test(text)) return new Date(now - 86_400_000).toISOString()
 
+  // Türkçe mutlak tarihler: "16 Ağustos 2024", "3 Ocak 2025"
+  const TR_MONTHS: Record<string, number> = {
+    ocak: 0, şubat: 1, mart: 2, nisan: 3, mayis: 4, mayıs: 4,
+    haziran: 5, temmuz: 6, agustos: 7, ağustos: 7, eylul: 8, eylül: 8,
+    ekim: 9, kasim: 10, kasım: 10, aralik: 11, aralık: 11,
+  }
+  const absDate = text.match(/(\d{1,2})\s+([\wşğüöçıİŞĞÜÖÇ]+)\s+(20\d{2})/i)
+  if (absDate) {
+    const monthKey = absDate[2].toLowerCase()
+    const monthIdx = TR_MONTHS[monthKey]
+    if (monthIdx !== undefined) {
+      const d = new Date(parseInt(absDate[3]), monthIdx, parseInt(absDate[1]))
+      if (!isNaN(d.getTime())) return d.toISOString()
+    }
+  }
+
   return null
 }
 
@@ -831,16 +884,26 @@ function validateGoogleSearchCandidate(
   const handleSim = businessWords.length > 0 ? matchedInHandle.length / businessWords.length : 0
   const bestSim   = Math.max(textSim, handleSim)
 
-  // ── Sinyal 2: Şehir/ilçe + güçlü isim benzerliği → olası ──
+  // ── Sinyal 2: Güçlü handle benzerliği (şehir bağımsız) ──
+  if (handleSim >= 0.6) {
+    return { confidence: 'likely', reason: `Handle güçlü isim benzerliği (%${Math.round(handleSim * 100)})` }
+  }
+
+  // ── Sinyal 3: Şehir/ilçe + isim benzerliği ──
   const cityParts = normalizeForComparison(cityQuery).split(' ').filter(w => w.length >= 4)
   const cityMatched = cityParts.find(p => combined.includes(p))
-  if (cityMatched && bestSim >= 0.5) {
+  if (cityMatched && bestSim >= 0.4) {
     const label = cityMatched.charAt(0).toUpperCase() + cityMatched.slice(1)
     return { confidence: 'likely', reason: `${label} + isim benzerliği eşleşti` }
   }
 
-  // ── Sinyal 3: Kısmi eşleşme → tahmini (doğrulama önerilir) ──
-  if (bestSim >= 0.3) {
+  // ── Sinyal 4: Güçlü metin benzerliği (şehir bağımsız) ──
+  if (textSim >= 0.5) {
+    return { confidence: 'likely', reason: `Metin güçlü isim benzerliği (%${Math.round(textSim * 100)})` }
+  }
+
+  // ── Sinyal 5: Kısmi eşleşme → tahmini (doğrulama önerilir) ──
+  if (bestSim >= 0.25) {
     const source = handleSim >= textSim ? 'handle' : 'arama metni'
     return { confidence: 'possible', reason: `Kısmi isim benzerliği (${source}) — doğrulayın` }
   }
@@ -872,7 +935,7 @@ async function googleSearchInstagram(
         body: JSON.stringify({
           queries: `${businessName} ${cityQuery} instagram`,
           maxPagesPerQuery: 1,
-          resultsPerPage: 5,
+          resultsPerPage: 10,
           countryCode: 'tr',
           languageCode: 'tr',
         }),
@@ -901,6 +964,8 @@ async function googleSearchInstagram(
       }
     }
 
+    console.log(`[IG SEARCH] "${businessName}" → ${results.length} total results, ${results.filter(r => r.url.includes('instagram.com')).length} IG URLs`)
+
     // instagram.com URL'lerinden handle çıkar, doğrula
     const IG_URL_RE = /instagram\.com\/([a-zA-Z0-9._]{1,30})(?:\/|\?|#|$)/
     const SYSTEM_PATHS = new Set([
@@ -919,7 +984,10 @@ async function googleSearchInstagram(
         handle, result.title, result.description,
         businessName, cityQuery, phone,
       )
-      if (!validation) continue
+      if (!validation) {
+        console.log(`[IG SEARCH] @${handle} rejected — title="${result.title.slice(0, 60)}"`)
+        continue
+      }
 
       console.log(`[IG SEARCH] @${handle} validated (${validation.confidence}) — fetching profile for activity...`)
       // Handle bulundu; gerçek aktivite verisini almak için profil scraper'ı çağır
@@ -1112,7 +1180,7 @@ async function googleSearchFacebook(
         body: JSON.stringify({
           queries: `${businessName} ${cityQuery} facebook`,
           maxPagesPerQuery: 1,
-          resultsPerPage: 5,
+          resultsPerPage: 10,
           countryCode: 'tr',
           languageCode: 'tr',
         }),
@@ -1145,6 +1213,8 @@ async function googleSearchFacebook(
       'privacy', 'legal', 'about', 'login', 'signup', 'pages', 'groups', 'events', 'watch',
     ])
 
+    console.log(`[FB SEARCH] "${businessName}" → ${results.length} total results, ${results.filter(r => r.url.includes('facebook.com')).length} FB URLs`)
+
     for (const result of results) {
       const m = FB_URL_RE.exec(result.url)
       if (!m) continue
@@ -1154,7 +1224,10 @@ async function googleSearchFacebook(
       const validation = validateGoogleSearchCandidate(
         handle, result.title, result.description, businessName, cityQuery, phone,
       )
-      if (!validation) continue
+      if (!validation) {
+        console.log(`[FB SEARCH] @${handle} rejected — title="${result.title.slice(0, 60)}"`)
+        continue
+      }
 
       // Snippet'ten takipçi, beğeni ve son paylaşım tarihini çözümle (ek Apify çağrısı yok)
       const combinedText = `${result.title} ${result.description}`
@@ -1275,7 +1348,7 @@ async function googleSearchTiktok(
         body: JSON.stringify({
           queries: `${businessName} ${cityQuery} tiktok`,
           maxPagesPerQuery: 1,
-          resultsPerPage: 5,
+          resultsPerPage: 10,
           countryCode: 'tr',
           languageCode: 'tr',
         }),
@@ -1302,6 +1375,8 @@ async function googleSearchTiktok(
       }
     }
 
+    console.log(`[TT SEARCH] "${businessName}" → ${results.length} total results, ${results.filter(r => r.url.includes('tiktok.com')).length} TT URLs`)
+
     const TT_URL_RE = /tiktok\.com\/@([a-zA-Z0-9._-]{1,30})(?:\/|\?|#|$)/
 
     for (const result of results) {
@@ -1312,7 +1387,10 @@ async function googleSearchTiktok(
       const validation = validateGoogleSearchCandidate(
         handle, result.title, result.description, businessName, cityQuery, phone,
       )
-      if (!validation) continue
+      if (!validation) {
+        console.log(`[TT SEARCH] @${handle} rejected — title="${result.title.slice(0, 60)}"`)
+        continue
+      }
 
       console.log(`[TT SEARCH] @${handle} validated (${validation.confidence}) — fetching profile...`)
       const profile = await fetchTiktokProfile(handle, token, validation.confidence, validation.reason)
@@ -1638,6 +1716,7 @@ function computeEstablishment(
   if (hasOpeningHours) s += 5
   if (websiteSource !== 'none') s += 5
   if (site?.hasPixel || site?.hasGoogleAds) s += 10
+  else if (site?.hasAnalytics) s += 4  // GA4/Analytics var ama reklam kodu yok
   // Domain yaşı bonusu (RDAP)
   if (domainInfo) {
     if (domainInfo.ageYears >= 5) s += 10
@@ -1739,7 +1818,8 @@ function computeGap(
 
   // ── Yorum kalitesi ──
   if (lastReviewDate && daysSinceStr(lastReviewDate) > 90) s += Math.round(8 * wReview)
-  if (negativeReviewRate !== null && negativeReviewRate > 30) s += Math.round(10 * wReview)
+  // Not: negativeReviewRate en fazla 5 yorumdan hesaplanır; eşik yüksek tutulur
+  if (negativeReviewRate !== null && negativeReviewRate > 50) s += Math.round(10 * wReview)
 
   // ── Google Business açıklaması ──
   if (!hasGoogleDescription) s += Math.round(3 * wSeo)
@@ -1758,7 +1838,7 @@ function computeGap(
   if (site) {
     if (!site.hasOnlinePayment && profile.website >= 3) s += Math.round(6 * wSite)
     if (!site.hasLiveChat) s += Math.round(4 * wAds)
-    if (!site.hasGTM && (site.hasPixel || site.hasGoogleAds)) s += Math.round(3 * wAds)
+    if (!site.hasGTM && (site.hasPixel || site.hasGoogleAds || site.hasAnalytics)) s += Math.round(3 * wAds)
     if (!site.hasNewsletter) s += Math.round(3 * wAds)
   }
 
@@ -1825,7 +1905,8 @@ function detectGaps(
         add(`Mobil performans kritik (${site.mobileScore}/100)`, wS * 3)
       else if (site.mobileScore !== null && site.mobileScore < 70)
         add(`Mobil performans zayıf (${site.mobileScore}/100)`, wS * 2)
-      if (!site.hasPixel && !site.hasGoogleAds) add('Sitede reklam/takip kodu yok', profile.ads * 2)
+      if (!site.hasPixel && !site.hasGoogleAds)
+        add(site.hasAnalytics ? 'Sitede Meta Pixel ve Google Ads kodu yok (yalnızca Analytics)' : 'Sitede reklam/dönüşüm takip kodu yok', profile.ads * 2)
       if (!site.hasSocialLinks) add('Sitede sosyal medya bağlantısı yok', profile.instagram)
     }
   } else if (site) {
@@ -1834,7 +1915,8 @@ function detectGaps(
       add(`Mobil performans kritik (${site.mobileScore}/100)`, wS * 3)
     else if (site.mobileScore !== null && site.mobileScore < 70)
       add(`Mobil performans zayıf (${site.mobileScore}/100)`, wS * 2)
-    if (!site.hasPixel && !site.hasGoogleAds) add('Sitede reklam/takip kodu yok', profile.ads * 2)
+    if (!site.hasPixel && !site.hasGoogleAds)
+      add(site.hasAnalytics ? 'Sitede Meta Pixel ve Google Ads kodu yok (yalnızca Analytics)' : 'Sitede reklam/dönüşüm takip kodu yok', profile.ads * 2)
     if (!site.hasSocialLinks) add('Sitede sosyal medya bağlantısı yok', profile.instagram)
   }
 
@@ -1923,8 +2005,9 @@ function detectGaps(
     const n = daysSinceStr(lastReviewDate)
     add(`Son yorumdan bu yana ${n} gün geçmiş — güncel müşteri geri bildirimi eksik`, profile.googleReview * 3)
   }
-  if (negativeReviewRate !== null && negativeReviewRate > 30)
-    add(`Son yorumların %${negativeReviewRate}'i olumsuz (1-2 yıldız) — itibar yönetimi gerekiyor`, profile.googleReview * 4)
+  // Not: Google Places max 5 yorum döndürür; küçük örneklem nedeniyle eşik yüksek tutulur
+  if (negativeReviewRate !== null && negativeReviewRate > 50)
+    add(`Son görünen yorumların %${negativeReviewRate}'i olumsuz (1-2 yıldız) — itibar yönetimi gerekiyor`, profile.googleReview * 4)
 
   // ── Google Business açıklaması ──
   if (!hasGoogleDescription)
@@ -1949,8 +2032,8 @@ function detectGaps(
     add('Sitede canlı destek yok — potansiyel müşteri soruları yanıtsız kalıyor', profile.ads * 2)
   if (site && !site.hasNewsletter)
     add('E-posta listesi toplama sistemi yok — müşteri tabanı oluşturma fırsatı kaçırılıyor', profile.ads)
-  if (site && !site.hasGTM && (site.hasPixel || site.hasGoogleAds))
-    add('Google Tag Manager kullanılmıyor — reklam izleme ve dönüşüm optimizasyonu eksik', profile.ads * 2)
+  if (site && !site.hasGTM && (site.hasPixel || site.hasGoogleAds || site.hasAnalytics))
+    add('Google Tag Manager kullanılmıyor — tüm izleme kodları HTML\'e gömülü, yönetimi zor ve hata riski yüksek', profile.ads * 2)
 
   // ── Platformlar (null = bu sektörde ilgisiz) ──
   if (platforms) {
@@ -2049,7 +2132,9 @@ function generatePitch(
     return `Geçmişte ${metaAds.totalAdCount} Meta reklamı vermiş — reklama alışkın ama şu an aktif değil. Yeniden aktivasyon + optimizasyon paketiyle dönüşüm hemen başlatılabilir.`
 
   if (site && !site.hasPixel && !site.hasGoogleAds && reviewCount >= 50 && profile.ads >= 3)
-    return 'Sitede reklam/takip kodu yok — dijital reklam potansiyeli boşa gidiyor. Google Ads + Meta Pixel ile dönüşüm izleme hemen başlatılabilir.'
+    return site.hasAnalytics
+      ? 'Sitede Analytics var ama Meta Pixel veya Google Ads kodu yok — müşteri davranışları izlenemiyor, reklam dönüşümü ölçülemiyor.'
+      : 'Sitede reklam/takip kodu yok — dijital reklam potansiyeli boşa gidiyor. Google Ads + Meta Pixel ile dönüşüm izleme hemen başlatılabilir.'
 
   if (instagram?.activity === 'neglected')
     return 'Instagram hesabı var ama uzun süredir atıl — sosyal medya yönetimi + içerik stratejisi paketi için doğrudan ve güçlü bir satış argümanı.'
@@ -2156,9 +2241,11 @@ async function googleSearchPlatforms(
     if (!Array.isArray(raw)) return defaults
 
     const result = { ...defaults }
-    // İşletme adının anlamlı ilk kelimesini normalleştir (Türkçe karakter duyarsız)
-    const normBusinessWords = normalizeForComparison(businessName).split(' ').filter(w => w.length > 2)
-    const normBusiness = normBusinessWords[0] ?? normalizeForComparison(businessName).split(' ')[0]
+    // Yerel paket eşleşmesi için: şehir/sektör kelimelerini dışarıda bırakarak anlamlı kelimeler
+    const cityWords = new Set(normalizeForComparison(cityQuery).split(' ').filter(w => w.length >= 4))
+    const normBusinessWords = normalizeForComparison(businessName)
+      .split(' ')
+      .filter(w => w.length >= 3 && !cityWords.has(w))
     const sectorPrefix = sector.toLowerCase().slice(0, Math.min(8, sector.length))
 
     for (const item of raw) {
@@ -2190,10 +2277,13 @@ async function googleSearchPlatforms(
       }
 
       // Yerel paket kontrolü — sektör+şehir sorgusunun yerel sonuçlarında işletme adı var mı
-      if (query.includes(sectorPrefix)) {
+      // En az 2 anlamlı kelime (veya tek kelimeli işletme için 1) eşleşmeli
+      if (query.includes(sectorPrefix) && normBusinessWords.length > 0) {
         for (const lr of localResults) {
           const lrNorm = normalizeForComparison(lr.title ?? lr.name ?? '')
-          if (lrNorm.includes(normBusiness)) {
+          const matchedWords = normBusinessWords.filter(w => lrNorm.includes(w))
+          const needed = Math.min(normBusinessWords.length, 2)
+          if (matchedWords.length >= needed) {
             result.inLocalPack = true
           }
         }
@@ -2220,7 +2310,8 @@ function computeReviewInsights(
     .sort((a, b) => new Date(b.publishTime!).getTime() - new Date(a.publishTime!).getTime())
   const lastReviewDate = sorted[0]?.publishTime ?? null
   const withRating = reviews.filter(r => r.rating != null)
-  const negativeReviewRate = withRating.length > 0
+  // Google Places max 5 yorum döndürür — en az 3 varsa hesapla, yoksa null (istatistiksel anlamsızlık)
+  const negativeReviewRate = withRating.length >= 3
     ? Math.round(withRating.filter(r => r.rating! <= 2).length / withRating.length * 100)
     : null
   return { lastReviewDate, negativeReviewRate }

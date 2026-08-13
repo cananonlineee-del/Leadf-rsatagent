@@ -139,7 +139,9 @@ function primaryGapHook(lead: Lead): string {
   if (lead.siteAnalysis?.mobileScore != null && lead.siteAnalysis.mobileScore < 50)
     return `web sitenizin mobil hız skorunun ${lead.siteAnalysis.mobileScore}/100 olduğunu gördüm`
   if (!lead.siteAnalysis?.hasPixel && !lead.siteAnalysis?.hasGoogleAds)
-    return 'dijital reklam altyapınızın henüz kurulmadığını fark ettim'
+    return lead.siteAnalysis?.hasAnalytics
+      ? 'sitenizde Analytics var ama Meta Pixel veya Google Ads dönüşüm kodu olmadığını fark ettim'
+      : 'dijital reklam altyapınızın henüz kurulmadığını fark ettim'
   if (lead.instagram?.activity === 'dormant')
     return 'Instagram hesabınızın bir süredir güncellenemediğini gördüm'
   if (!lead.siteAnalysis?.hasWhatsApp && lead.siteAnalysis)
@@ -156,8 +158,8 @@ function primaryGapHook(lead: Lead): string {
   }
   if (!lead.facebook && !lead.tiktok && (lead.instagram?.followersCount ?? 0) > 500)
     return 'Facebook ve TikTok kanallarınızın eksik olduğunu fark ettim — mevcut kitlenizi bu platformlara taşıyabilirsiniz'
-  if (lead.negativeReviewRate !== null && lead.negativeReviewRate > 40)
-    return `son yorumlarınızın %${lead.negativeReviewRate}'inin olumsuz olduğunu gördüm`
+  if (lead.negativeReviewRate !== null && lead.negativeReviewRate > 60)
+    return `son görünen yorumlarınızın %${lead.negativeReviewRate}'inin olumsuz olduğunu gördüm`
   if (lead.lastReviewDate) {
     const days = Math.floor((Date.now() - new Date(lead.lastReviewDate).getTime()) / 86_400_000)
     if (days > 180)
@@ -212,7 +214,9 @@ function detailedGapLines(lead: Lead): string[] {
     lines.push(`Haftada ortalama ${lead.instagram.weeklyPostFreq} paylaşım yapıyorsunuz — içerik sıklığı artırılabilir.`)
 
   if (!lead.siteAnalysis?.hasPixel && !lead.siteAnalysis?.hasGoogleAds && lead.websiteSource !== 'none')
-    lines.push('Sitenizde reklam takip kodu yok — hangi kanaldan müşteri geldiğini ölçemiyorsunuz.')
+    lines.push(lead.siteAnalysis?.hasAnalytics
+      ? 'Sitenizde Analytics var ama Meta Pixel veya Google Ads dönüşüm kodu yok — reklam kanallarını ölçemiyorsunuz.'
+      : 'Sitenizde reklam takip kodu yok — hangi kanaldan müşteri geldiğini ölçemiyorsunuz.')
 
   if (lead.topCompetitor && lead.topCompetitor.reviewCount > lead.reviewCount * 2)
     lines.push(`Bölgenizdeki ${lead.topCompetitor.name} ${lead.topCompetitor.reviewCount} yorumla öne çıkarken sizin ${lead.reviewCount} yorumunuz var — yorum yönetimiyle bu farkı kapatabilirsiniz.`)
@@ -228,8 +232,8 @@ function detailedGapLines(lead: Lead): string[] {
     if (days > 90 && lead.reviewCount > 10)
       lines.push(`Google'da son yorumunuz ${days} gün önce — düzenli yorum kampanyasıyla görünürlüğü artırabilirsiniz.`)
   }
-  if (lead.negativeReviewRate !== null && lead.negativeReviewRate > 20)
-    lines.push(`Son yorumların %${lead.negativeReviewRate}'i olumsuz (1-2 yıldız) — aktif itibar yönetimiyle ortalama puan artırılabilir.`)
+  if (lead.negativeReviewRate !== null && lead.negativeReviewRate > 50)
+    lines.push(`Son görünen yorumların %${lead.negativeReviewRate}'i olumsuz (1-2 yıldız) — aktif itibar yönetimiyle ortalama puan artırılabilir.`)
   if (lead.instagram?.bio && !lead.instagram.bioHasPhone && !lead.instagram.bioHasUrl)
     lines.push("Instagram bio'nuzda telefon veya web linki yok — profilden doğrudan müşteri kazanmak zorlaşıyor.")
 
@@ -566,7 +570,7 @@ function LeadCard({ lead, rank, senderName, agencyName, agencyWebsite, onPreview
   const adsUrgent =
     lead.websiteSource !== 'none' &&
     !lead.siteAnalysis?.hasPixel &&
-    !lead.siteAnalysis?.hasGoogleAds
+    !lead.siteAnalysis?.hasGoogleAds  // hasAnalytics tek başına yeterli değil — gerçek reklam kodu yok
 
   const services = [
     { label: 'Web Sitesi',      urgent: siteUrgent,   weight: lead.categoryProfile.website },
@@ -717,11 +721,11 @@ function LeadCard({ lead, rank, senderName, agencyName, agencyWebsite, onPreview
               if (s.mobileScore !== null && s.mobileScore < 70)
                 siteProblems.push(<Row key="mob" label="Mobil Hız"><span className={`text-xs font-semibold ${s.mobileScore < 50 ? 'text-red-400' : 'text-amber-400'}`}>{s.mobileScore}/100</span></Row>)
               if (!s.hasPixel && !s.hasGoogleAds)
-                siteProblems.push(<Row key="px" label="Reklam Kodu"><span className="text-xs font-medium text-red-400">✕ Meta Pixel & Google Ads yok</span></Row>)
+                siteProblems.push(<Row key="px" label="Reklam Kodu"><span className="text-xs font-medium text-red-400">{s.hasAnalytics ? '✕ Pixel & Ads yok (Analytics var)' : '✕ Hiçbir reklam kodu yok'}</span></Row>)
               else if (!s.hasPixel)
                 siteProblems.push(<Row key="px2" label="Meta Pixel"><span className="text-xs font-medium text-red-400">✕ Yok</span></Row>)
               else if (!s.hasGoogleAds)
-                siteProblems.push(<Row key="ga" label="Google Kodu"><span className="text-xs font-medium text-red-400">✕ Yok</span></Row>)
+                siteProblems.push(<Row key="ga" label="Google Ads Kodu"><span className="text-xs font-medium text-amber-400">✕ Yok</span></Row>)
               if (!s.hasSocialLinks) siteProblems.push(<Row key="soc" label="Sosyal Linkler"><span className="text-xs font-medium text-red-400">✕ Yok</span></Row>)
               if (s.pageTitle === null || s.pageTitle.length < 20)
                 siteProblems.push(<Row key="title" label="Sayfa Başlığı"><span className={`text-xs font-semibold ${s.pageTitle === null ? 'text-zinc-600' : 'text-red-400'}`}>{s.pageTitle === null ? 'Tespit edilemedi' : `${s.pageTitle.slice(0,40)}${s.pageTitle.length > 40 ? '…' : ''} (${s.pageTitle.length} kr)`}</span></Row>)
@@ -736,7 +740,7 @@ function LeadCard({ lead, rank, senderName, agencyName, agencyWebsite, onPreview
                 siteProblems.push(<Row key="pay" label="Online Ödeme"><span className="text-xs font-medium text-red-400">✕ Yok</span></Row>)
               if (!s.hasLiveChat) siteProblems.push(<Row key="lc" label="Canlı Chat"><span className="text-xs font-medium text-amber-400">✕ Yok</span></Row>)
               if (!s.hasNewsletter) siteProblems.push(<Row key="nl" label="Bülten Formu"><span className="text-xs font-medium text-amber-400">✕ Yok</span></Row>)
-              if (!s.hasGTM && (s.hasPixel || s.hasGoogleAds))
+              if (!s.hasGTM && (s.hasPixel || s.hasGoogleAds || s.hasAnalytics))
                 siteProblems.push(<Row key="gtm" label="GTM"><span className="text-xs font-medium text-amber-400">✕ Yok</span></Row>)
               if (s.hasContactForm && !s.contactFormHasPhone)
                 siteProblems.push(<Row key="cfp" label="Form'da Tel"><span className="text-xs font-medium text-amber-400">✕ Yok</span></Row>)
@@ -780,8 +784,9 @@ function LeadCard({ lead, rank, senderName, agencyName, agencyWebsite, onPreview
               gProblems.push(<Row key="hrs" label="Çalışma Saatleri"><span className="text-xs font-medium text-red-400">✕ Girilmemiş</span></Row>)
             if (lead.lastReviewDate && Math.floor((Date.now() - new Date(lead.lastReviewDate).getTime()) / 86_400_000) > 90)
               gProblems.push(<Row key="rev" label="Son Yorum"><span className="text-xs font-semibold text-red-400">{formatDate(lead.lastReviewDate)}</span></Row>)
-            if (lead.negativeReviewRate !== null && lead.negativeReviewRate > 15)
-              gProblems.push(<Row key="neg" label="Olumsuz Yorum"><span className={`text-xs font-semibold ${lead.negativeReviewRate > 30 ? 'text-red-400' : 'text-amber-400'}`}>%{lead.negativeReviewRate}</span></Row>)
+            {/* Eşik yükseltildi: Google max 5 yorum döndürür, küçük örneklemden yüksek hassasiyette oran çıkarılmaz */}
+            if (lead.negativeReviewRate !== null && lead.negativeReviewRate > 40)
+              gProblems.push(<Row key="neg" label="Olumsuz Yorum"><span className={`text-xs font-semibold ${lead.negativeReviewRate > 60 ? 'text-red-400' : 'text-amber-400'}`}>%{lead.negativeReviewRate} <span className="text-zinc-600 font-normal">(örn.)</span></span></Row>)
             if (!lead.hasGoogleDescription)
               gProblems.push(<Row key="desc" label="G. Açıklama"><span className="text-xs font-medium text-red-400">✕ Yok</span></Row>)
             if (lead.businessStatus !== 'OPERATIONAL')
