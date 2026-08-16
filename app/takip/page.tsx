@@ -36,6 +36,7 @@ export default function TakipPage() {
   const [monitored, setMonitored]         = useState<MonitoredLead[]>([])
   const [notifications, setNotifications] = useState<Notification[]>([])
   const [crmLeads, setCrmLeads]           = useState<CRMRow[]>([])
+  const [myUserId, setMyUserId]           = useState<string | null>(null)
   const [tab, setTab]                     = useState<'bildirimler' | 'crm' | 'takip'>('bildirimler')
   const [loading, setLoading]             = useState(true)
 
@@ -43,7 +44,7 @@ export default function TakipPage() {
 
   async function load() {
     setLoading(true)
-    const [monResult, notifList, crmList] = await Promise.all([
+    const [monResult, notifList, crmResult] = await Promise.all([
       supabase
         .from('monitored_leads')
         .select('*')
@@ -53,7 +54,8 @@ export default function TakipPage() {
     ])
     setMonitored((monResult.data as MonitoredLead[]) ?? [])
     setNotifications(notifList)
-    setCrmLeads(crmList)
+    setCrmLeads(crmResult.rows)
+    setMyUserId(crmResult.myUserId)
     setLoading(false)
   }
 
@@ -203,11 +205,17 @@ export default function TakipPage() {
               <div className="space-y-2">
                 {crmLeads.map(row => {
                   const ld = row.lead_data
+                  const isTeamEntry = myUserId !== null && row.user_id !== myUserId
                   return (
-                    <div key={row.place_id} className="bg-[#1c1c22] border border-white/[0.12] rounded-2xl px-4 py-3">
+                    <div key={`${row.user_id}-${row.place_id}`} className="bg-[#1c1c22] border border-white/[0.12] rounded-2xl px-4 py-3">
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
-                          <p className="text-sm font-bold text-white truncate">{ld.name ?? '—'}</p>
+                          <div className="flex items-center gap-2 mb-0.5">
+                            <p className="text-sm font-bold text-white truncate">{ld.name ?? '—'}</p>
+                            {isTeamEntry && (
+                              <span className="shrink-0 text-[9px] font-bold bg-purple-500/10 text-purple-400 border border-purple-500/20 rounded-full px-1.5 py-px">Ekip</span>
+                            )}
+                          </div>
                           {(ld.sector || ld.city) && (
                             <p className="text-xs text-zinc-600 mt-0.5">{[ld.sector, ld.city].filter(Boolean).join(' · ')}</p>
                           )}

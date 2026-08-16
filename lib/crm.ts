@@ -49,6 +49,7 @@ export const CRM_STATUS_LABELS: Record<CRMStatus, string> = {
 
 export interface CRMRow {
   place_id: string
+  user_id: string
   status: CRMStatus
   note: string
   updated_at: string
@@ -63,14 +64,20 @@ export interface CRMRow {
   }
 }
 
-export async function listCRMLeads(): Promise<CRMRow[]> {
+export async function listCRMLeads(): Promise<{ rows: CRMRow[]; myUserId: string | null }> {
   const supabase = createClient()
-  const { data } = await supabase
-    .from('crm_leads')
-    .select('place_id, status, note, updated_at, lead_data')
-    .not('status', 'eq', 'new')          // 'new' = henüz dokunulmamış, CRM listesinde gösterme
-    .order('updated_at', { ascending: false })
-  return (data as CRMRow[]) ?? []
+  const [{ data: userData }, { data }] = await Promise.all([
+    supabase.auth.getUser(),
+    supabase
+      .from('crm_leads')
+      .select('place_id, user_id, status, note, updated_at, lead_data')
+      .not('status', 'eq', 'new')
+      .order('updated_at', { ascending: false }),
+  ])
+  return {
+    rows:     (data as CRMRow[]) ?? [],
+    myUserId: userData.user?.id ?? null,
+  }
 }
 
 export const CRM_STATUS_BADGE: Record<CRMStatus, string> = {
