@@ -1372,6 +1372,35 @@ export default function AnalizPage() {
     setSavedSearches(s => s.filter(x => x.id !== id))
   }
 
+  // ── CSV Export ──
+  function handleCsvExport() {
+    const header = ['İşletme', 'Adres', 'Puan', 'Değerlendirme Sayısı', 'Telefon', 'E-posta', 'Web Sitesi', 'Instagram', 'Fırsat Skoru', 'CRM Durumu', 'Not']
+    const rows = filteredLeads.map(l => {
+      const crm = l.placeId ? crmMap[l.placeId] : undefined
+      return [
+        l.name,
+        l.address ?? '',
+        l.rating?.toFixed(1) ?? '',
+        l.reviewCount,
+        l.phone ?? '',
+        l.siteAnalysis?.emailAddress ?? '',
+        l.website ?? '',
+        l.instagramHandle ? `@${l.instagramHandle}` : '',
+        l.score,
+        crm ? CRM_STATUS_LABELS[crm.status] : 'Yeni',
+        crm?.note ?? '',
+      ].map(cell => `"${String(cell).replace(/"/g, '""')}"`)
+    })
+    const csv = [header.join(','), ...rows.map(r => r.join(','))].join('\n')
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' })
+    const url  = URL.createObjectURL(blob)
+    const a    = document.createElement('a')
+    a.href     = url
+    a.download = `leadler-${new Date().toISOString().slice(0, 10)}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   // ── Filtrelenmiş sonuçlar ──
   const CRM_FILTER_KEYS: CRMStatus[] = ['new', 'contacted', 'in_progress', 'closed', 'rejected']
   const isCrmFilter = CRM_FILTER_KEYS.includes(filter as CRMStatus)
@@ -1605,6 +1634,13 @@ export default function AnalizPage() {
             {/* Kaydetme alanı */}
             {isLoggedIn && (
               <div className="flex items-center gap-2 mb-4">
+                <button
+                  onClick={handleCsvExport}
+                  title="CSV olarak indir"
+                  className="text-xs border border-white/[0.15] text-zinc-400 hover:text-white hover:border-white/30 px-3 py-1.5 rounded-lg transition-colors shrink-0"
+                >
+                  ⬇ CSV
+                </button>
                 {!showSaveInput ? (
                   <button
                     onClick={() => setShowSaveInput(true)}
