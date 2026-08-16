@@ -42,7 +42,7 @@ CREATE POLICY "crm_leads_team_select"
     EXISTS (
       SELECT 1
       FROM team_members tm
-      WHERE tm.user_id    = crm_leads.user_id
+      WHERE tm.owner_id   = crm_leads.user_id
         AND tm.member_email = auth.email()
         AND tm.accepted_at IS NOT NULL
     )
