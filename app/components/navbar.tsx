@@ -6,9 +6,8 @@ import { useRouter, usePathname } from 'next/navigation'
 import { createClient } from '../../lib/supabase/client'
 
 const NAV_LINKS = [
-  { href: '/analiz',    label: 'Analiz' },
-  { href: '/sablonlar', label: 'Şablonlar' },
-  { href: '/takip',     label: 'Takip' },
+  { href: '/analiz', label: 'Analiz' },
+  { href: '/takip',  label: 'Takip' },
 ]
 
 // ─── Logo mark ────────────────────────────────────────────────────────────────

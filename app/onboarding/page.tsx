@@ -4,15 +4,11 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '../../lib/supabase/client'
 
-type Step = 1 | 2 | 3
+type Step = 1 | 2
 
 export default function OnboardingPage() {
   const router = useRouter()
   const [step, setStep] = useState<Step>(1)
-  const [senderName, setSenderName] = useState('')
-  const [agencyName, setAgencyName] = useState('')
-  const [agencyWebsite, setAgencyWebsite] = useState('')
-  const [displayName, setDisplayName] = useState('')
 
   useEffect(() => {
     if (localStorage.getItem('lb_onboarded')) {
@@ -24,17 +20,6 @@ export default function OnboardingPage() {
       if (!data.user) router.replace('/giris')
     })
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
-
-  function handleStep2Submit() {
-    if (!senderName.trim()) return
-    localStorage.setItem('lb_sender', JSON.stringify({
-      name: senderName.trim(),
-      agency: agencyName.trim(),
-      website: agencyWebsite.trim(),
-    }))
-    setDisplayName(senderName.trim())
-    setStep(3)
-  }
 
   function handleFinish() {
     localStorage.setItem('lb_onboarded', 'true')
@@ -56,7 +41,7 @@ export default function OnboardingPage() {
 
           {/* Progress dots */}
           <div className="flex justify-center gap-2 mb-8">
-            {([1, 2, 3] as Step[]).map(s => (
+            {([1, 2] as Step[]).map(s => (
               <div
                 key={s}
                 className={`h-2 rounded-full transition-all duration-300 ${
@@ -81,7 +66,7 @@ export default function OnboardingPage() {
                   Lead Ajanına Hoş Geldiniz
                 </h1>
                 <p className="text-zinc-400 text-sm mb-8">
-                  Google Maps'ten potansiyel müşterileri bulun, yapay zeka ile analiz edin, anında mesaj gönderin.
+                  Google Maps&rsquo;ten potansiyel müşterileri bulun, yapay zeka ile analiz edin, PDF rapor indirin.
                 </p>
                 <ul className="text-left space-y-3 mb-8">
                   <li className="flex items-start gap-3">
@@ -94,7 +79,7 @@ export default function OnboardingPage() {
                   </li>
                   <li className="flex items-start gap-3">
                     <span className="text-blue-400 font-bold mt-0.5 leading-5">·</span>
-                    <span className="text-zinc-300 text-sm">Kişiselleştirilmiş hazır mesajlar</span>
+                    <span className="text-zinc-300 text-sm">PDF rapor ile müşteride kalıcı iz bırakın</span>
                   </li>
                 </ul>
                 <button
@@ -106,78 +91,12 @@ export default function OnboardingPage() {
               </div>
             )}
 
-            {/* Step 2 — Profile */}
+            {/* Step 2 — Ready */}
             {step === 2 && (
-              <div key="step-2" className="step-enter">
-                <h2 className="text-xl font-black text-white mb-2">Seni Tanıyalım</h2>
-                <p className="text-zinc-400 text-sm mb-6">
-                  Bu bilgiler PDF ve mesajlarında otomatik olarak kullanılır.
-                </p>
-                <div className="space-y-4 mb-6">
-                  <div>
-                    <label className="block text-[10px] text-zinc-500 uppercase tracking-widest mb-1.5">
-                      Ad Soyad <span className="text-blue-400 normal-case tracking-normal">*</span>
-                    </label>
-                    <input
-                      type="text"
-                      autoFocus
-                      value={senderName}
-                      onChange={e => setSenderName(e.target.value)}
-                      onKeyDown={e => { if (e.key === 'Enter') handleStep2Submit() }}
-                      placeholder="Ahmet Yılmaz"
-                      className="w-full bg-white/[0.07] border border-white/[0.12] text-white rounded-xl px-3 py-2.5 text-sm placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500/40 transition"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] text-zinc-500 uppercase tracking-widest mb-1.5">
-                      Ajans / Şirket
-                      <span className="ml-1 normal-case tracking-normal text-zinc-600">(opsiyonel)</span>
-                    </label>
-                    <input
-                      type="text"
-                      value={agencyName}
-                      onChange={e => setAgencyName(e.target.value)}
-                      placeholder="Digital Ajans A.Ş."
-                      className="w-full bg-white/[0.07] border border-white/[0.12] text-white rounded-xl px-3 py-2.5 text-sm placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500/40 transition"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] text-zinc-500 uppercase tracking-widest mb-1.5">
-                      Web Sitesi
-                      <span className="ml-1 normal-case tracking-normal text-zinc-600">(opsiyonel)</span>
-                    </label>
-                    <input
-                      type="text"
-                      value={agencyWebsite}
-                      onChange={e => setAgencyWebsite(e.target.value)}
-                      placeholder="digitalajans.com.tr"
-                      className="w-full bg-white/[0.07] border border-white/[0.12] text-white rounded-xl px-3 py-2.5 text-sm placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500/40 transition"
-                    />
-                  </div>
-                </div>
-                <button
-                  onClick={handleStep2Submit}
-                  disabled={!senderName.trim()}
-                  className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl py-3 text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed mb-3"
-                >
-                  Devam Et →
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setStep(1)}
-                  className="w-full text-xs text-zinc-600 hover:text-zinc-400 transition-colors py-1"
-                >
-                  ← Geri
-                </button>
-              </div>
-            )}
-
-            {/* Step 3 — Done */}
-            {step === 3 && (
-              <div key="step-3" className="step-enter text-center">
+              <div key="step-2" className="step-enter text-center">
                 <div className="text-5xl mb-6">🚀</div>
                 <h2 className="text-2xl font-black text-white mb-3">
-                  {displayName}, her şey hazır!
+                  Her şey hazır!
                 </h2>
                 <p className="text-zinc-400 text-sm mb-8">
                   İşte nasıl kullanacağınız:
@@ -204,7 +123,7 @@ export default function OnboardingPage() {
                       3
                     </span>
                     <span className="text-zinc-300 text-sm pt-0.5">
-                      "Mesaj Gönder" ile hazır WhatsApp mesajını düzenleyip müşteriye gönderin
+                      PDF raporu indirin, takibe alın ve CRM&rsquo;den ilerlemesini izleyin
                     </span>
                   </li>
                 </ol>
@@ -216,7 +135,7 @@ export default function OnboardingPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setStep(2)}
+                  onClick={() => setStep(1)}
                   className="w-full text-xs text-zinc-600 hover:text-zinc-400 transition-colors py-1"
                 >
                   ← Geri

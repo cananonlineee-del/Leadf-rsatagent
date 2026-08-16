@@ -13,7 +13,6 @@ import {
   type SavedSearch,
 } from '../../lib/savedSearches'
 import { generateLeadPDF } from '../../lib/pdf'
-import { listTemplates, applyTemplate, type MessageTemplate } from '../../lib/templates'
 import { createClient } from '../../lib/supabase/client'
 
 // ─── Yardımcı fonksiyonlar ────────────────────────────────────────────────────
@@ -117,196 +116,6 @@ function needMeta(score: number): { label: string; badgeCls: string; borderCls: 
     badgeCls:  'bg-white/5 text-zinc-500 border border-white/10',
     borderCls: 'border-white/[0.07]',
   }
-}
-
-// ─── WhatsApp Mesaj Üreteci ───────────────────────────────────────────────────
-
-function toWaPhone(phone: string): string | null {
-  const d = phone.replace(/\D/g, '')
-  if (d.startsWith('90') && d.length === 12) return d
-  if (d.startsWith('0')  && d.length === 11) return '90' + d.slice(1)
-  if (d.length === 10)                        return '90' + d
-  return null
-}
-
-function ablative(word: string): string {
-  const back = /[aıou]/
-  const vowels = word.toLowerCase().match(/[aeıiouöü]/g)
-  const lastVowel = vowels ? vowels[vowels.length - 1] : 'a'
-  return back.test(lastVowel) ? "'dan" : "'den"
-}
-
-function primaryGapHook(lead: Lead): string {
-  if (lead.websiteSource === 'none')
-    return 'çevrimiçi bir varlığınızın olmadığını gördüm'
-  if (lead.instagram?.activity === 'neglected' && lead.instagram.lastPostDate) {
-    const days = Math.floor((Date.now() - new Date(lead.instagram.lastPostDate).getTime()) / 86_400_000)
-    return `Instagram hesabınızın ${days} gündür güncellenmediğini fark ettim`
-  }
-  if (lead.reviewCount < 10)
-    return `Google'da yalnızca ${lead.reviewCount} yorumunuz olduğunu gördüm`
-  if (lead.siteAnalysis && !lead.siteAnalysis.ssl)
-    return 'web sitenizde güvenlik sertifikası (HTTPS) olmadığını fark ettim'
-  if (lead.siteAnalysis?.mobileScore != null && lead.siteAnalysis.mobileScore < 50)
-    return `web sitenizin mobil hız skorunun ${lead.siteAnalysis.mobileScore}/100 olduğunu gördüm`
-  if (!lead.siteAnalysis?.hasPixel && !lead.siteAnalysis?.hasGoogleAds)
-    return lead.siteAnalysis?.hasAnalytics
-      ? 'sitenizde Analytics var ama Meta Pixel veya Google Ads dönüşüm kodu olmadığını fark ettim'
-      : 'dijital reklam altyapınızın henüz kurulmadığını fark ettim'
-  if (lead.instagram?.activity === 'dormant')
-    return 'Instagram hesabınızın bir süredir güncellenemediğini gördüm'
-  if (!lead.siteAnalysis?.hasWhatsApp && lead.siteAnalysis)
-    return 'sitenizde WhatsApp iletişim butonu olmadığını gördüm — mobil ziyaretçiler sizi kaçırıyor'
-  if (lead.instagram?.engagementRate != null && lead.instagram.engagementRate < 1)
-    return `Instagram'da %${lead.instagram.engagementRate.toFixed(1)} etkileşim oranınız olduğunu gördüm — takipçileriniz içerikle bağ kuramıyor`
-  if (lead.facebook?.activity === 'neglected' && lead.facebook.lastPostDate) {
-    const days = Math.floor((Date.now() - new Date(lead.facebook.lastPostDate).getTime()) / 86_400_000)
-    return `Facebook sayfanızın ${days} gündür güncellenmediğini fark ettim`
-  }
-  if (lead.tiktok?.activity === 'neglected' && lead.tiktok.lastPostDate) {
-    const days = Math.floor((Date.now() - new Date(lead.tiktok.lastPostDate).getTime()) / 86_400_000)
-    return `TikTok hesabınızın ${days} gündür hareketsiz olduğunu gördüm`
-  }
-  if (!lead.facebook && !lead.tiktok && (lead.instagram?.followersCount ?? 0) > 500)
-    return 'Facebook ve TikTok kanallarınızın eksik olduğunu fark ettim — mevcut kitlenizi bu platformlara taşıyabilirsiniz'
-  if (lead.negativeReviewRate !== null && lead.negativeReviewRate > 60)
-    return `son görünen yorumlarınızın %${lead.negativeReviewRate}'inin olumsuz olduğunu gördüm`
-  if (lead.lastReviewDate) {
-    const days = Math.floor((Date.now() - new Date(lead.lastReviewDate).getTime()) / 86_400_000)
-    if (days > 180)
-      return `son ${days} gündür yeni yorum almadığınızı fark ettim`
-  }
-  if (lead.instagram?.bioLength != null && lead.instagram.bioLength < 20 && (lead.instagram.followersCount ?? 0) > 300)
-    return "Instagram bio'nuzun çok kısa olduğunu gördüm — takipçiler işletmenizi tanıyamıyor"
-  if (lead.siteAnalysis && !lead.siteAnalysis.hasOnlinePayment && lead.categoryProfile.website >= 3)
-    return 'sitenizde online ödeme sistemi olmadığını fark ettim — ziyaretçiler anlık satın alma yapamıyor'
-  if (lead.siteAnalysis && !lead.siteAnalysis.hasLiveChat && lead.reviewCount > 50)
-    return 'sitenizde canlı destek olmadığını gördüm — sorular yanıtsız kalıyor'
-  if (lead.platforms && !lead.platforms.inLocalPack)
-    return "Google harita sonuçlarının 3'lüsünde görünmediğinizi fark ettim — değerli yerel arama trafiği kaçıyor"
-  if (lead.platforms && lead.platforms.yemeksepeti === false && lead.platforms.getir === false)
-    return 'Yemeksepeti veya Getir\'de listelenmediğinizi fark ettim — online sipariş kanalı eksik'
-  if (lead.googleBusinessScore < 50)
-    return `Google Business profilinizin %${lead.googleBusinessScore} tamamlanmış olduğunu gördüm — bu sizi arama sonuçlarında geri bırakıyor`
-  return 'dijital varlığınızda güçlendirebileceğimiz önemli noktalar dikkatimi çekti'
-}
-
-function detailedGapLines(lead: Lead): string[] {
-  const lines: string[] = []
-
-  if (lead.websiteSource === 'none') {
-    lines.push('Web sitesi tespit edilemedi — Google aramasında rakiplerinizin gerisinde kalıyorsunuz.')
-  } else {
-    if (lead.websiteSource === 'discovered')
-      lines.push('Google profilinizde web siteniz kayıtlı değil; potansiyel müşteriler sizi bulmakta zorlanıyor.')
-    if (lead.siteAnalysis && !lead.siteAnalysis.ssl)
-      lines.push('Web siteniz HTTP üzerinde çalışıyor — ziyaretçiler "Güvensiz" uyarısıyla karşılaşıyor.')
-    if (lead.siteAnalysis?.mobileScore != null && lead.siteAnalysis.mobileScore < 70)
-      lines.push(`Mobil hız skorunuz ${lead.siteAnalysis.mobileScore}/100 — mobil ziyaretçilerin büyük kısmı sayfayı terk edebilir.`)
-    if (lead.siteAnalysis?.emailAddress && lead.siteAnalysis.hasCorpEmail === false)
-      lines.push(`İletişim e-posta adresiniz (${lead.siteAnalysis.emailAddress}) ücretsiz bir servis — kurumsal görünüm zayıflıyor.`)
-  }
-
-  if (lead.reviewCount < 10)
-    lines.push(`Google'da ${lead.reviewCount} yorumunuz var — bu sektörde müşteri kararları büyük ölçüde yorumlara göre şekilleniyor.`)
-  else if (lead.rating != null && lead.rating < 4.0)
-    lines.push(`Google puanınız ${lead.rating.toFixed(1)}/5 — bu seviyenin üzerine çıkmak daha fazla müşteri getirir.`)
-
-  if (lead.instagram?.activity === 'neglected' && lead.instagram.lastPostDate) {
-    const days = Math.floor((Date.now() - new Date(lead.instagram.lastPostDate).getTime()) / 86_400_000)
-    lines.push(`Instagram hesabınız ${days} gündür güncellenmemiş — bu sektörde sosyal medya aktifliği kritik.`)
-  } else if (lead.instagram?.activity === 'dormant') {
-    lines.push('Instagram hesabınız son 1-3 aydır güncellenmemiş.')
-  } else if (!lead.instagramHandle) {
-    lines.push('Instagram hesabı tespit edilemedi — rakipleriniz bu kanaldan aktif müşteri kazanıyor olabilir.')
-  }
-
-  if (lead.instagram?.weeklyPostFreq != null && lead.instagram.weeklyPostFreq < 1 && lead.instagram.activity === 'active')
-    lines.push(`Haftada ortalama ${lead.instagram.weeklyPostFreq} paylaşım yapıyorsunuz — içerik sıklığı artırılabilir.`)
-
-  if (!lead.siteAnalysis?.hasPixel && !lead.siteAnalysis?.hasGoogleAds && lead.websiteSource !== 'none')
-    lines.push(lead.siteAnalysis?.hasAnalytics
-      ? 'Sitenizde Analytics var ama Meta Pixel veya Google Ads dönüşüm kodu yok — reklam kanallarını ölçemiyorsunuz.'
-      : 'Sitenizde reklam takip kodu yok — hangi kanaldan müşteri geldiğini ölçemiyorsunuz.')
-
-  if (lead.topCompetitor && lead.topCompetitor.reviewCount > lead.reviewCount * 2)
-    lines.push(`Bölgenizdeki ${lead.topCompetitor.name} ${lead.topCompetitor.reviewCount} yorumla öne çıkarken sizin ${lead.reviewCount} yorumunuz var — yorum yönetimiyle bu farkı kapatabilirsiniz.`)
-
-  if (lead.siteAnalysis && !lead.siteAnalysis.hasWhatsApp)
-    lines.push('Sitenizde WhatsApp butonu yok — mobil cihazdan gelen ziyaretçiler sizinle anında iletişim kuramıyor.')
-
-  if (lead.instagram?.engagementRate != null && lead.instagram.engagementRate < 1 && lead.instagram.followersCount != null)
-    lines.push(`Instagram'da ${formatCount(lead.instagram.followersCount)} takipçiniz var ancak %${lead.instagram.engagementRate.toFixed(1)} etkileşim oranı sektör ortalamasının altında.`)
-
-  if (lead.lastReviewDate) {
-    const days = Math.floor((Date.now() - new Date(lead.lastReviewDate).getTime()) / 86_400_000)
-    if (days > 90 && lead.reviewCount > 10)
-      lines.push(`Google'da son yorumunuz ${days} gün önce — düzenli yorum kampanyasıyla görünürlüğü artırabilirsiniz.`)
-  }
-  if (lead.negativeReviewRate !== null && lead.negativeReviewRate > 50)
-    lines.push(`Son görünen yorumların %${lead.negativeReviewRate}'i olumsuz (1-2 yıldız) — aktif itibar yönetimiyle ortalama puan artırılabilir.`)
-  if (lead.instagram?.bio && !lead.instagram.bioHasPhone && !lead.instagram.bioHasUrl)
-    lines.push("Instagram bio'nuzda telefon veya web linki yok — profilden doğrudan müşteri kazanmak zorlaşıyor.")
-
-  if (lead.facebook?.activity === 'neglected' && lead.facebook.lastPostDate) {
-    const days = Math.floor((Date.now() - new Date(lead.facebook.lastPostDate).getTime()) / 86_400_000)
-    lines.push(`Facebook sayfanız ${days} gündür güncellenmemiş — düzenli paylaşımla marka güveni inşa edilebilir.`)
-  }
-  if (!lead.facebook)
-    lines.push('Facebook sayfası bulunamadı — bu kanaldan potansiyel müşterilere ulaşma fırsatı değerlendirilmiyor.')
-  if (!lead.tiktok && (lead.categoryProfile.instagram ?? 0) >= 3)
-    lines.push('TikTok hesabı tespit edilemedi — kısa video içeriğiyle hızla büyüyen bu kanalda rakiplerinizin gerisinde kalabilirsiniz.')
-
-  if (lead.platforms && !lead.platforms.inLocalPack)
-    lines.push("Google harita 3-paketinde görünmüyorsunuz — yerel aramalardaki en nitelikli trafik bu listeden geliyor.")
-  if (lead.platforms && lead.platforms.yemeksepeti === false && lead.platforms.getir === false)
-    lines.push('Yemeksepeti veya Getir\'de listelenmiyorsunuz — online sipariş pazarından müşteri kazanma fırsatı değerlendirilmiyor.')
-  if (lead.googleBusinessScore < 60)
-    lines.push(`Google Business profiliniz %${lead.googleBusinessScore} tamamlanmış — eksik bilgiler yerel arama sıralamanızı doğrudan etkiliyor.`)
-  if (lead.siteAnalysis && !lead.siteAnalysis.hasOnlinePayment && lead.categoryProfile.website >= 3)
-    lines.push('Sitenizde ödeme sistemi yok — ziyaretçilerin doğrudan satın alması veya ön ödeme yapması mümkün değil.')
-
-  return lines.slice(0, 3)
-}
-
-function buildShortMessage(lead: Lead, senderName: string, agencyName: string, agencyWebsite: string): string {
-  const hook = primaryGapHook(lead)
-  const sigParts = [senderName, agencyWebsite].filter(Boolean)
-  const sigLine = sigParts.length > 0 ? '\n\n' + sigParts.join('\n') : ''
-  return (
-    `Merhaba, ${lead.name}'ı inceledim — ${hook}. ` +
-    `Bu konuda size özel hızlı bir çözümümüz var; kısa bir görüşme yapar mıyız?` +
-    sigLine
-  )
-}
-
-function buildDetailedMessage(lead: Lead, senderName: string, agencyName: string, agencyWebsite: string): string {
-  const introLine = agencyName && senderName
-    ? `Sizlere ${agencyName}${ablative(agencyName)} ulaşıyorum. Ben Dijital Pazarlama Uzmanı ${senderName}`
-    : agencyName
-      ? `Sizlere ${agencyName}${ablative(agencyName)} ulaşıyorum.`
-      : senderName
-        ? `Ben Dijital Pazarlama Uzmanı ${senderName}.`
-        : ''
-
-  const gapLines = detailedGapLines(lead)
-  const gapBlock = gapLines.length > 0
-    ? '\n\nBirkaç önemli nokta dikkatimi çekti:\n' + gapLines.join('\n')
-    : ''
-
-  const solution = '\n\nBu konularda somut ve ölçülebilir sonuç alabilecek çözümlerimiz var.'
-  const closing  = '\n\n5-10 dakikalık kısa bir görüşme için uygun bir zaman var mı?'
-  const sigParts = [senderName, agencyWebsite].filter(Boolean)
-  const sigLine  = sigParts.length > 0 ? '\n\n' + sigParts.join('\n') : ''
-
-  return (
-    `Merhaba, ${lead.name} sayfanızı inceleyerek size ulaşmak istedim.` +
-    (introLine ? `\n\n${introLine}` : '') +
-    gapBlock +
-    solution +
-    closing +
-    sigLine
-  )
 }
 
 // ─── Popüler sektörler (hızlı seçim chip'leri) ────────────────────────────────
@@ -493,182 +302,6 @@ function CityAutocomplete({
   )
 }
 
-// ─── Mesaj Önizleme Modalı ────────────────────────────────────────────────────
-
-function MessagePreviewModal({
-  lead,
-  senderName,
-  agencyName,
-  agencyWebsite,
-  initialType,
-  onClose,
-}: {
-  lead: Lead
-  senderName: string
-  agencyName: string
-  agencyWebsite: string
-  initialType: 'short' | 'long'
-  onClose: () => void
-}) {
-  const [type, setType]               = useState(initialType)
-  const [copied, setCopied]           = useState(false)
-  const [useTemplate, setUseTemplate] = useState(false)
-  const [templates, setTemplates]     = useState<MessageTemplate[]>([])
-  const [selectedTpl, setSelectedTpl] = useState('')
-
-  const shortMsg = buildShortMessage(lead, senderName, agencyName, agencyWebsite)
-  const longMsg  = buildDetailedMessage(lead, senderName, agencyName, agencyWebsite)
-
-  const [editedMsg, setEditedMsg] = useState(type === 'short' ? shortMsg : longMsg)
-
-  useEffect(() => {
-    if (!useTemplate) {
-      setEditedMsg(type === 'short' ? shortMsg : longMsg)
-      setCopied(false)
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [type, useTemplate])
-
-  useEffect(() => {
-    listTemplates(lead.primaryType ?? undefined).then(setTemplates)
-  }, [lead.primaryType])
-
-  useEffect(() => {
-    if (!useTemplate || !selectedTpl) return
-    const tpl = templates.find(t => t.id === selectedTpl)
-    if (!tpl) return
-    const sender = { name: senderName, agency: agencyName, website: agencyWebsite }
-    const text = applyTemplate(type === 'short' ? tpl.short_template : tpl.long_template, lead, sender)
-    setEditedMsg(text)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedTpl, type, useTemplate])
-
-  const waPhone = lead.phone ? toWaPhone(lead.phone) : null
-
-  async function doCopy() {
-    await navigator.clipboard.writeText(editedMsg)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
-  }
-
-  return (
-    <div
-      className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4"
-      onClick={e => { if (e.target === e.currentTarget) onClose() }}
-    >
-      <div className="bg-[#1c1c22] border border-white/[0.12] rounded-t-2xl sm:rounded-2xl w-full sm:max-w-lg shadow-2xl">
-        {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-white/[0.08]">
-          <div>
-            <h3 className="text-white font-bold text-sm">{lead.name}</h3>
-            <p className="text-zinc-600 text-xs mt-0.5">WhatsApp mesajını düzenle ve gönder</p>
-          </div>
-          <button
-            onClick={onClose}
-            className="w-7 h-7 flex items-center justify-center rounded-lg text-zinc-500 hover:text-white hover:bg-white/[0.08] transition-colors text-sm"
-          >
-            ✕
-          </button>
-        </div>
-
-        {/* Type toggle */}
-        <div className="px-5 pt-4">
-          <div className="flex rounded-xl bg-white/[0.06] p-1">
-            <button
-              type="button"
-              onClick={() => setType('short')}
-              className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
-                type === 'short' ? 'bg-white/10 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'
-              }`}
-            >
-              Kısa Mesaj
-            </button>
-            <button
-              type="button"
-              onClick={() => setType('long')}
-              className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
-                type === 'long' ? 'bg-white/10 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'
-              }`}
-            >
-              Detaylı Mesaj
-            </button>
-          </div>
-        </div>
-
-        {/* Şablon seçici */}
-        <div className="px-5 pt-3">
-          <label className="flex items-center gap-2 cursor-pointer mb-2">
-            <button
-              type="button"
-              onClick={() => setUseTemplate(v => !v)}
-              className={`w-8 h-4 rounded-full transition-colors relative ${useTemplate ? 'bg-blue-600' : 'bg-zinc-700'}`}
-            >
-              <span className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all ${useTemplate ? 'left-4' : 'left-0.5'}`} />
-            </button>
-            <span className="text-xs text-zinc-400">Hazır Şablon Kullan</span>
-          </label>
-
-          {useTemplate && (
-            <select
-              value={selectedTpl}
-              onChange={e => setSelectedTpl(e.target.value)}
-              className="w-full bg-white/[0.07] border border-white/[0.12] text-white rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/40 appearance-none cursor-pointer transition mb-2"
-            >
-              <option value="">Şablon seçin…</option>
-              {templates.map(t => (
-                <option key={t.id} value={t.id}>{t.name}{t.sector ? ` (${t.sector})` : ''}</option>
-              ))}
-            </select>
-          )}
-        </div>
-
-        {/* Editable textarea */}
-        <div className="px-5 pt-1 pb-1">
-          <textarea
-            value={editedMsg}
-            onChange={e => setEditedMsg(e.target.value)}
-            rows={type === 'short' ? 5 : 9}
-            className="w-full bg-white/[0.04] border border-white/[0.10] rounded-xl px-3 py-3 text-sm text-zinc-200 leading-relaxed resize-none focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500/40 transition"
-          />
-          <p className="text-[11px] text-zinc-700 mt-1">Mesajı göndermeden önce düzenleyebilirsin</p>
-        </div>
-
-        {/* Actions */}
-        <div className="flex gap-2.5 px-5 py-4">
-          <button
-            onClick={doCopy}
-            className={`flex-1 text-xs font-semibold py-2.5 rounded-xl border transition-colors ${
-              copied
-                ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-400'
-                : 'border-white/[0.12] text-zinc-400 hover:text-white hover:bg-white/[0.06]'
-            }`}
-          >
-            {copied ? '✓ Kopyalandı' : 'Kopyala'}
-          </button>
-          {waPhone ? (
-            <a
-              href={`https://wa.me/${waPhone}?text=${encodeURIComponent(editedMsg)}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={onClose}
-              className="flex-1 text-center text-xs font-bold py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white transition-colors"
-            >
-              WhatsApp&rsquo;ta Aç ↗
-            </a>
-          ) : (
-            <span
-              title="Telefon numarası bulunamadı"
-              className="flex-1 text-center text-xs font-semibold py-2.5 rounded-xl border border-white/[0.08] text-zinc-700 cursor-not-allowed"
-            >
-              Telefon Yok
-            </span>
-          )}
-        </div>
-      </div>
-    </div>
-  )
-}
-
 // ─── LeadCard ─────────────────────────────────────────────────────────────────
 
 type DetailTab = 'google' | 'web' | 'sosyal' | 'platform' | 'firsat'
@@ -676,10 +309,6 @@ type DetailTab = 'google' | 'web' | 'sosyal' | 'platform' | 'firsat'
 function LeadCard({
   lead,
   rank,
-  senderName,
-  agencyName,
-  agencyWebsite,
-  onPreview,
   crmStatus,
   crmNote,
   onStatusChange,
@@ -689,10 +318,6 @@ function LeadCard({
 }: {
   lead: Lead
   rank: number
-  senderName: string
-  agencyName: string
-  agencyWebsite: string
-  onPreview: (type: 'short' | 'long') => void
   crmStatus: CRMStatus
   crmNote: string
   onStatusChange: (status: CRMStatus) => void
@@ -728,7 +353,7 @@ function LeadCard({
   async function handlePdf() {
     setPdfLoading(true)
     try {
-      await generateLeadPDF(lead, senderName, agencyName)
+      await generateLeadPDF(lead)
     } finally {
       setPdfLoading(false)
     }
@@ -996,24 +621,6 @@ function LeadCard({
           </button>
 
           {/* Takip mesajı (contacted durumunda) */}
-          {crmStatus === 'contacted' && (
-            <button
-              type="button"
-              onClick={() => onPreview('short')}
-              className="px-2.5 py-2 rounded-lg border border-amber-500/30 text-amber-400 hover:bg-amber-500/10 text-xs font-semibold transition-colors shrink-0"
-            >
-              Takip
-            </button>
-          )}
-
-          {/* PRIMARY: Mesaj Gönder */}
-          <button
-            type="button"
-            onClick={() => onPreview('short')}
-            className="flex-1 text-center text-xs font-bold px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white transition-colors"
-          >
-            Mesaj Gönder →
-          </button>
         </div>
       </div>
 
@@ -1496,15 +1103,6 @@ export default function AnalizPage() {
   // Filtre
   const [filter, setFilter] = useState<'all' | 'high' | 'mid' | 'low' | CRMStatus>('all')
 
-  // Mesaj önizleme
-  const [previewLead, setPreviewLead]   = useState<Lead | null>(null)
-  const [previewType, setPreviewType]   = useState<'short' | 'long'>('short')
-
-  // Mesaj ayarları
-  const [senderName, setSenderName]         = useState('')
-  const [agencyName, setAgencyName]         = useState('')
-  const [agencyWebsite, setAgencyWebsite]   = useState('')
-  const [senderOpen, setSenderOpen]         = useState(false)
 
   // CRM
   const [crmMap, setCrmMap] = useState<Record<string, { status: CRMStatus; note: string }>>({})
@@ -1521,30 +1119,6 @@ export default function AnalizPage() {
   const [isLoggedIn, setIsLoggedIn]             = useState(false)
 
   const supabase = createClient()
-
-  // ── localStorage: yükle ──
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem('lb_sender')
-      if (raw) {
-        const saved = JSON.parse(raw) as { name?: string; agency?: string; website?: string }
-        if (saved.name)    setSenderName(saved.name)
-        if (saved.agency)  setAgencyName(saved.agency)
-        if (saved.website) setAgencyWebsite(saved.website)
-      } else {
-        setSenderOpen(true)
-      }
-    } catch { /* ignore */ }
-  }, [])
-
-  // ── localStorage: kaydet ──
-  useEffect(() => {
-    try {
-      localStorage.setItem('lb_sender', JSON.stringify({
-        name: senderName, agency: agencyName, website: agencyWebsite,
-      }))
-    } catch { /* ignore */ }
-  }, [senderName, agencyName, agencyWebsite])
 
   // ── Auth durumu + kayıtlı aramalar ──
   useEffect(() => {
@@ -1694,18 +1268,6 @@ export default function AnalizPage() {
     <div className="min-h-screen bg-[#111115] text-white">
       <Navbar />
 
-      {/* Mesaj önizleme modalı */}
-      {previewLead && (
-        <MessagePreviewModal
-          lead={previewLead}
-          senderName={senderName}
-          agencyName={agencyName}
-          agencyWebsite={agencyWebsite}
-          initialType={previewType}
-          onClose={() => setPreviewLead(null)}
-        />
-      )}
-
       <div className="max-w-2xl mx-auto px-4 pt-14 pb-12">
 
         {/* Hero */}
@@ -1846,62 +1408,6 @@ export default function AnalizPage() {
             </>
           )}
 
-          {/* ── Mesaj Ayarları (katlanabilir) ── */}
-          <div className="border border-white/[0.08] rounded-xl overflow-hidden">
-            <button
-              type="button"
-              onClick={() => setSenderOpen(v => !v)}
-              className="w-full flex items-center justify-between px-4 py-3 hover:bg-white/[0.04] transition-colors"
-            >
-              <div className="flex items-center gap-2 min-w-0">
-                <span className="text-[11px] text-zinc-500 uppercase tracking-widest font-bold shrink-0">Mesaj Ayarları</span>
-                {(senderName || agencyName) && !senderOpen && (
-                  <span className="text-xs text-zinc-600 truncate">
-                    · {[senderName, agencyName].filter(Boolean).join(', ')}
-                  </span>
-                )}
-              </div>
-              <span className="text-zinc-600 text-[10px] ml-2 shrink-0">{senderOpen ? '▲' : '▼'}</span>
-            </button>
-            {senderOpen && (
-              <div className="border-t border-white/[0.08] px-4 py-4 space-y-3">
-                <p className="text-[11px] text-zinc-600">WhatsApp mesajlarına eklenecek bilgiler. Bir kez doldurman yeterli.</p>
-                <div className="flex flex-col sm:flex-row gap-3">
-                  <div className="flex-1">
-                    <label className={labelCls}>Adınız</label>
-                    <input
-                      type="text"
-                      placeholder="Canan Özdoğru"
-                      value={senderName}
-                      onChange={e => setSenderName(e.target.value)}
-                      className={inputCls}
-                    />
-                  </div>
-                  <div className="flex-1">
-                    <label className={labelCls}>Ajans Adı</label>
-                    <input
-                      type="text"
-                      placeholder="Dijital Medya"
-                      value={agencyName}
-                      onChange={e => setAgencyName(e.target.value)}
-                      className={inputCls}
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label className={labelCls}>Ajans Web Sitesi</label>
-                  <input
-                    type="text"
-                    placeholder="www.ajansiniz.com"
-                    value={agencyWebsite}
-                    onChange={e => setAgencyWebsite(e.target.value)}
-                    className={inputCls}
-                  />
-                </div>
-              </div>
-            )}
-          </div>
-
           {/* ── Submit ── */}
           <button
             type="submit"
@@ -2040,10 +1546,6 @@ export default function AnalizPage() {
                     key={pid}
                     lead={lead}
                     rank={leads.indexOf(lead) + 1}
-                    senderName={senderName}
-                    agencyName={agencyName}
-                    agencyWebsite={agencyWebsite}
-                    onPreview={type => { setPreviewLead(lead); setPreviewType(type) }}
                     crmStatus={crm.status}
                     crmNote={crm.note}
                     onStatusChange={status => handleStatusChange(lead, status)}

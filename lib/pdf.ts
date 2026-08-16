@@ -1,9 +1,7 @@
 import type { Lead } from '../app/api/analyze/route'
 
 export async function generateLeadPDF(
-  lead: Lead,
-  senderName: string,
-  agencyName: string
+  lead: Lead
 ): Promise<void> {
   const { jsPDF } = await import('jspdf')
   const doc = new jsPDF({ format: 'a4', unit: 'mm' })
@@ -209,13 +207,7 @@ export async function generateLeadPDF(
   draw(220, 220, 230)
   doc.line(margin, footerY - 4, W - margin, footerY - 4)
 
-  const footerParts = [senderName, agencyName].filter(Boolean)
-  const footerLeft = footerParts.join(' · ')
-  addText(footerLeft, margin, footerY, { size: 7.5, color: [120, 120, 140] })
   addText('Leadbulucu ile hazırlandı', W - margin, footerY, { size: 7.5, color: [150, 150, 200] })
-  doc.setFont('helvetica', 'normal')
-  doc.setTextColor(150, 150, 200)
-  doc.text('Leadbulucu ile hazırlandı', W - margin, footerY, { align: 'right' })
 
   // ── Kaydet
   const filename = `${lead.name.replace(/[^a-z0-9]/gi, '_')}_dijital_analiz.pdf`
