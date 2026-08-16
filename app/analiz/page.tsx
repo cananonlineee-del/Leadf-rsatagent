@@ -331,6 +331,7 @@ function LeadCard({
   const [statusOpen, setStatusOpen]   = useState(false)
   const [localNote, setLocalNote]     = useState(crmNote)
   const [pdfLoading, setPdfLoading]   = useState(false)
+  const [copiedKey, setCopiedKey]     = useState<string | null>(null)
   const noteTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const statusRef = useRef<HTMLDivElement>(null)
 
@@ -348,6 +349,12 @@ function LeadCard({
     setLocalNote(val)
     clearTimeout(noteTimer.current)
     noteTimer.current = setTimeout(() => onNoteChange(val), 500)
+  }
+
+  function copyText(text: string, key: string) {
+    navigator.clipboard.writeText(text).catch(() => undefined)
+    setCopiedKey(key)
+    setTimeout(() => setCopiedKey(k => k === key ? null : k), 2000)
   }
 
   async function handlePdf() {
@@ -551,14 +558,6 @@ function LeadCard({
           )}
           <span className="text-white/10">·</span>
           <span className="text-xs text-zinc-500">{lead.reviewCount.toLocaleString('tr-TR')} yorum</span>
-          {lead.phone && (
-            <>
-              <span className="text-white/10">·</span>
-              <a href={`tel:${lead.phone}`} className="text-xs text-zinc-500 hover:text-blue-400 transition-colors">
-                {lead.phone}
-              </a>
-            </>
-          )}
           {lead.googleMapsUri && (
             <>
               <span className="text-white/10">·</span>
@@ -590,6 +589,53 @@ function LeadCard({
             </span>
           ))}
         </div>
+
+        {/* ── İletişim ─────────────────────────────────────────────────── */}
+        {(lead.phone || lead.siteAnalysis?.emailAddress) && (
+          <div className="flex flex-wrap gap-2 mb-3">
+            {lead.phone && (
+              <div className="flex items-center gap-0 bg-white/[0.04] border border-white/[0.08] rounded-lg overflow-hidden">
+                <a
+                  href={`tel:${lead.phone}`}
+                  className="pl-2.5 pr-2 py-1.5 text-xs text-zinc-300 hover:text-white transition-colors font-medium leading-none"
+                >
+                  📞 {lead.phone}
+                </a>
+                <button
+                  type="button"
+                  onClick={() => copyText(lead.phone!, 'phone')}
+                  title="Kopyala"
+                  className="px-2 py-1.5 border-l border-white/[0.08] text-[11px] text-zinc-600 hover:text-white hover:bg-white/[0.08] transition-colors leading-none"
+                >
+                  {copiedKey === 'phone' ? '✓' : '⎘'}
+                </button>
+              </div>
+            )}
+            {lead.siteAnalysis?.emailAddress && (
+              <div className="flex items-center gap-0 bg-white/[0.04] border border-white/[0.08] rounded-lg overflow-hidden">
+                <a
+                  href={`mailto:${lead.siteAnalysis.emailAddress}`}
+                  className="pl-2.5 pr-1.5 py-1.5 text-xs text-zinc-300 hover:text-white transition-colors font-medium leading-none flex items-center gap-1.5"
+                >
+                  ✉ {lead.siteAnalysis.emailAddress}
+                  {lead.siteAnalysis.hasCorpEmail === false && (
+                    <span className="text-[9px] bg-amber-500/10 text-amber-500 border border-amber-500/20 px-1 py-px rounded font-semibold">
+                      ücretsiz
+                    </span>
+                  )}
+                </a>
+                <button
+                  type="button"
+                  onClick={() => copyText(lead.siteAnalysis!.emailAddress!, 'email')}
+                  title="Kopyala"
+                  className="px-2 py-1.5 border-l border-white/[0.08] text-[11px] text-zinc-600 hover:text-white hover:bg-white/[0.08] transition-colors leading-none"
+                >
+                  {copiedKey === 'email' ? '✓' : '⎘'}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Buton grubu */}
         <div className="flex items-center gap-2 pt-3 border-t border-white/[0.09]">
