@@ -486,9 +486,12 @@ function LeadCard({
 
           {/* Sağ üst: Reklam ihtiyacı + CRM durum */}
           <div className="flex flex-col items-end gap-1.5 shrink-0">
-            <div className={`rounded-xl px-3 py-2 text-center ${need.badgeCls}`}>
-              <div className="text-[9px] font-bold uppercase tracking-wider opacity-60">Reklam İhtiyacı</div>
-              <div className="text-sm font-black leading-tight mt-0.5">{need.label}</div>
+            <div
+              className={`rounded-xl px-3 py-2 text-center cursor-default ${need.badgeCls}`}
+              title={`Fırsat Skoru: ${lead.score}/100\nÖdeme Gücü: ${lead.odemeGucu} · Açık Şiddeti: ${lead.acikSiddeti}\nFormül: √(Ödeme Gücü × Açık Şiddeti)`}
+            >
+              <div className="text-[9px] font-bold uppercase tracking-wider opacity-60">Fırsat Skoru</div>
+              <div className="text-sm font-black leading-tight mt-0.5">{lead.score}<span className="text-[9px] font-semibold opacity-50">/100</span></div>
             </div>
 
             {/* CRM durum rozeti + dropdown */}
