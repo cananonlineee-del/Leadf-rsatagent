@@ -35,7 +35,7 @@ function GirisContent() {
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
       if (data.user) {
-        const onboarded = localStorage.getItem('lb_onboarded')
+        const onboarded = data.user.user_metadata?.onboarded || localStorage.getItem('lb_onboarded')
         router.replace(onboarded ? next : '/onboarding')
       }
     })
@@ -48,10 +48,10 @@ function GirisContent() {
     setSuccess(null)
 
     if (mode === 'login') {
-      const { error } = await supabase.auth.signInWithPassword({ email, password })
+      const { data: loginData, error } = await supabase.auth.signInWithPassword({ email, password })
       if (error) { setError(translateError(error.message)); setLoading(false) }
       else {
-        const onboarded = localStorage.getItem('lb_onboarded')
+        const onboarded = loginData.user?.user_metadata?.onboarded || localStorage.getItem('lb_onboarded')
         router.replace(onboarded ? next : '/onboarding')
       }
     } else {

@@ -11,17 +11,27 @@ export default function OnboardingPage() {
   const [step, setStep] = useState<Step>(1)
 
   useEffect(() => {
+    // localStorage hızlı cache: zaten onboard edildiyse direk /analiz'e
     if (localStorage.getItem('lb_onboarded')) {
       router.replace('/analiz')
       return
     }
     const supabase = createClient()
     supabase.auth.getUser().then(({ data }) => {
-      if (!data.user) router.replace('/giris')
+      if (!data.user) { router.replace('/giris'); return }
+      // Sunucu tarafı kontrol: başka cihazda onboard edilmişse
+      if (data.user.user_metadata?.onboarded) {
+        localStorage.setItem('lb_onboarded', 'true')
+        router.replace('/analiz')
+      }
     })
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  function handleFinish() {
+  async function handleFinish() {
+    const supabase = createClient()
+    // Sunucuya yaz — cihazdan bağımsız kalıcı
+    await supabase.auth.updateUser({ data: { onboarded: true } })
+    // localStorage cache
     localStorage.setItem('lb_onboarded', 'true')
     router.replace('/analiz')
   }
