@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { Navbar } from '../components/navbar'
 import { createClient } from '../../lib/supabase/client'
 import { listNotifications, markAllRead, markRead, type Notification } from '../../lib/notifications'
+import { listCRMLeads, CRM_STATUS_LABELS, CRM_STATUS_BADGE, type CRMRow } from '../../lib/crm'
 
 function notifIcon(message: string): { emoji: string; bg: string } {
   const m = message.toLowerCase()
@@ -32,24 +33,27 @@ interface MonitoredLead {
 }
 
 export default function TakipPage() {
-  const [monitored, setMonitored]       = useState<MonitoredLead[]>([])
+  const [monitored, setMonitored]         = useState<MonitoredLead[]>([])
   const [notifications, setNotifications] = useState<Notification[]>([])
-  const [tab, setTab]                   = useState<'takip' | 'bildirimler'>('bildirimler')
-  const [loading, setLoading]           = useState(true)
+  const [crmLeads, setCrmLeads]           = useState<CRMRow[]>([])
+  const [tab, setTab]                     = useState<'bildirimler' | 'crm' | 'takip'>('bildirimler')
+  const [loading, setLoading]             = useState(true)
 
   const supabase = createClient()
 
   async function load() {
     setLoading(true)
-    const [monResult, notifList] = await Promise.all([
+    const [monResult, notifList, crmList] = await Promise.all([
       supabase
         .from('monitored_leads')
         .select('*')
         .order('created_at', { ascending: false }),
       listNotifications(),
+      listCRMLeads(),
     ])
     setMonitored((monResult.data as MonitoredLead[]) ?? [])
     setNotifications(notifList)
+    setCrmLeads(crmList)
     setLoading(false)
   }
 
@@ -100,12 +104,20 @@ export default function TakipPage() {
             Bildirimler {unreadCount > 0 && <span className="ml-1 bg-red-500 text-white text-[9px] rounded-full px-1.5">{unreadCount}</span>}
           </button>
           <button
+            onClick={() => setTab('crm')}
+            className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+              tab === 'crm' ? 'bg-white/10 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'
+            }`}
+          >
+            CRM {crmLeads.length > 0 && <span className="ml-1 text-zinc-500">({crmLeads.length})</span>}
+          </button>
+          <button
             onClick={() => setTab('takip')}
             className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
               tab === 'takip' ? 'bg-white/10 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'
             }`}
           >
-            Takip Listesi ({monitored.length})
+            İzleme ({monitored.length})
           </button>
         </div>
 
@@ -170,8 +182,70 @@ export default function TakipPage() {
               </div>
             )}
           </div>
+        ) : tab === 'crm' ? (
+          /* CRM */
+          <div>
+            {crmLeads.length === 0 ? (
+              <div className="text-center py-16 border border-white/[0.07] rounded-2xl bg-white/[0.02]">
+                <div className="text-4xl mb-4">📋</div>
+                <p className="text-zinc-300 text-sm font-semibold mb-1">CRM boş</p>
+                <p className="text-zinc-600 text-xs mb-5 max-w-xs mx-auto leading-relaxed">
+                  Analiz sayfasında lead kartlarındaki durum rozetine basarak CRM&apos;e ekleyin.
+                </p>
+                <a
+                  href="/analiz"
+                  className="inline-block bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold px-5 py-2.5 rounded-xl transition-colors"
+                >
+                  Lead Bul →
+                </a>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {crmLeads.map(row => {
+                  const ld = row.lead_data
+                  return (
+                    <div key={row.place_id} className="bg-[#1c1c22] border border-white/[0.12] rounded-2xl px-4 py-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-sm font-bold text-white truncate">{ld.name ?? '—'}</p>
+                          {(ld.sector || ld.city) && (
+                            <p className="text-xs text-zinc-600 mt-0.5">{[ld.sector, ld.city].filter(Boolean).join(' · ')}</p>
+                          )}
+                          {(ld.phone || ld.siteAnalysis?.emailAddress) && (
+                            <div className="flex flex-wrap gap-x-3 mt-1">
+                              {ld.phone && (
+                                <a href={`tel:${ld.phone}`} className="text-xs text-zinc-400 hover:text-white transition-colors">
+                                  📞 {ld.phone}
+                                </a>
+                              )}
+                              {ld.siteAnalysis?.emailAddress && (
+                                <a href={`mailto:${ld.siteAnalysis.emailAddress}`} className="text-xs text-zinc-400 hover:text-white transition-colors truncate max-w-[180px]">
+                                  ✉ {ld.siteAnalysis.emailAddress}
+                                </a>
+                              )}
+                            </div>
+                          )}
+                          {row.note && (
+                            <p className="text-xs text-zinc-500 mt-1.5 leading-relaxed line-clamp-2">{row.note}</p>
+                          )}
+                        </div>
+                        <div className="flex flex-col items-end gap-1.5 shrink-0">
+                          <span className={`text-[10px] font-bold px-2 py-1 rounded-full ${CRM_STATUS_BADGE[row.status]}`}>
+                            {CRM_STATUS_LABELS[row.status]}
+                          </span>
+                          <p className="text-[10px] text-zinc-700">
+                            {new Intl.DateTimeFormat('tr-TR', { day: 'numeric', month: 'short' }).format(new Date(row.updated_at))}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
         ) : (
-          /* TAKİP LİSTESİ */
+          /* İZLEME LİSTESİ */
           <div>
             {monitored.length === 0 ? (
               <div className="text-center py-16 border border-white/[0.07] rounded-2xl bg-white/[0.02]">

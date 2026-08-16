@@ -47,6 +47,32 @@ export const CRM_STATUS_LABELS: Record<CRMStatus, string> = {
   rejected:    'Reddetti',
 }
 
+export interface CRMRow {
+  place_id: string
+  status: CRMStatus
+  note: string
+  updated_at: string
+  lead_data: {
+    name?: string
+    sector?: string
+    city?: string
+    address?: string
+    phone?: string
+    score?: number
+    siteAnalysis?: { emailAddress?: string } | null
+  }
+}
+
+export async function listCRMLeads(): Promise<CRMRow[]> {
+  const supabase = createClient()
+  const { data } = await supabase
+    .from('crm_leads')
+    .select('place_id, status, note, updated_at, lead_data')
+    .not('status', 'eq', 'new')          // 'new' = henüz dokunulmamış, CRM listesinde gösterme
+    .order('updated_at', { ascending: false })
+  return (data as CRMRow[]) ?? []
+}
+
 export const CRM_STATUS_BADGE: Record<CRMStatus, string> = {
   new:         'bg-zinc-800 text-zinc-400',
   contacted:   'bg-blue-500/15 text-blue-400',
