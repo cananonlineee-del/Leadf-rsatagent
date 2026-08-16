@@ -1167,6 +1167,20 @@ export default function AnalizPage() {
   const [selectedIl, setSelectedIl]         = useState('')
   const [selectedIlce, setSelectedIlce]     = useState('')
   const [cityDisplayValue, setCityDisplayValue] = useState('')
+  const [extraCities, setExtraCities]           = useState<Array<{il: string; ilce: string}>>([])
+
+  function addCurrentCity() {
+    if (!selectedIl || !selectedIlce) return
+    const already = extraCities.some(c => c.il === selectedIl && c.ilce === selectedIlce)
+    if (!already) setExtraCities(prev => [...prev, { il: selectedIl, ilce: selectedIlce }])
+    setSelectedIl('')
+    setSelectedIlce('')
+    setCityDisplayValue('')
+  }
+
+  function removeExtraCity(idx: number) {
+    setExtraCities(prev => prev.filter((_, i) => i !== idx))
+  }
 
   // Sonuçlar
   const [leads, setLeads]       = useState<Lead[]>([])
@@ -1248,13 +1262,40 @@ export default function AnalizPage() {
     setCrmMap({})
 
     try {
-      const url = searchMode === 'single'
-        ? `/api/analyze?businessName=${encodeURIComponent(businessQuery.trim())}&sector=${encodeURIComponent(sector.trim())}${selectedIl ? '&city=' + encodeURIComponent(selectedIl) : ''}`
-        : `/api/analyze?sector=${encodeURIComponent(sector.trim())}&city=${encodeURIComponent(`${selectedIlce} ${selectedIl}`)}`
-      const res  = await fetch(url)
-      const data = await res.json()
-      if (!res.ok) setError(data.error ?? 'Beklenmeyen bir hata oluştu.')
-      else { setLeads(data.leads); setSearched(true) }
+      if (searchMode === 'single') {
+        const url = `/api/analyze?businessName=${encodeURIComponent(businessQuery.trim())}&sector=${encodeURIComponent(sector.trim())}${selectedIl ? '&city=' + encodeURIComponent(selectedIl) : ''}`
+        const res  = await fetch(url)
+        const data = await res.json()
+        if (!res.ok) setError(data.error ?? 'Beklenmeyen bir hata oluştu.')
+        else { setLeads(data.leads); setSearched(true) }
+      } else {
+        // Birincil ilçe + ek ilçeler
+        const allCities = [
+          { il: selectedIl, ilce: selectedIlce },
+          ...extraCities,
+        ]
+        const responses = await Promise.all(
+          allCities.map(({ il, ilce }) =>
+            fetch(`/api/analyze?sector=${encodeURIComponent(sector.trim())}&city=${encodeURIComponent(`${ilce} ${il}`)}`)
+              .then(r => r.json() as Promise<{ leads?: Lead[]; error?: string }>)
+              .catch(() => ({ leads: [] as Lead[], error: undefined as string | undefined }))
+          )
+        )
+        const firstError = responses.find(r => r.error)
+        if (firstError?.error) { setError(firstError.error); return }
+        // Merge + deduplicate by placeId; sort by score
+        const seen = new Set<string>()
+        const merged: Lead[] = []
+        for (const r of responses) {
+          for (const lead of r.leads ?? []) {
+            const key = lead.placeId ?? lead.name
+            if (!seen.has(key)) { seen.add(key); merged.push(lead) }
+          }
+        }
+        merged.sort((a, b) => b.score - a.score)
+        setLeads(merged)
+        setSearched(true)
+      }
     } catch {
       setError('Sunucuya bağlanılamadı. Lütfen tekrar deneyin.')
     } finally {
@@ -1262,10 +1303,11 @@ export default function AnalizPage() {
     }
   }
 
+  const hasCity = selectedIl.length > 0 && selectedIlce.length > 0
   const canSubmit = !loading && (
     searchMode === 'single'
       ? businessQuery.trim().length >= 2 && sector.trim().length > 0
-      : sector.trim().length > 0 && selectedIl.length > 0 && selectedIlce.length > 0
+      : sector.trim().length > 0 && (hasCity || extraCities.length > 0)
   )
 
   // ── CRM handlers ──
@@ -1289,7 +1331,9 @@ export default function AnalizPage() {
     await supabase.from('monitored_leads').upsert({
       place_id:  lead.placeId,
       sector,
-      city:      `${selectedIlce} ${selectedIl}`.trim(),
+      city:      extraCities.length > 0
+        ? [{ il: selectedIl, ilce: selectedIlce }, ...extraCities].map(c => `${c.ilce} ${c.il}`).join(', ')
+        : `${selectedIlce} ${selectedIl}`.trim(),
       lead_data: lead,
       last_score: lead.score,
       notify_score_drop:  true,
@@ -1303,7 +1347,10 @@ export default function AnalizPage() {
   async function handleSaveSearch() {
     setSavingSearch(true)
     try {
-      const saved = await saveSearch(sector, `${selectedIlce} ${selectedIl}`.trim(), leads, saveNameInput || undefined)
+      const cityLabel = extraCities.length > 0
+        ? [{ il: selectedIl, ilce: selectedIlce }, ...extraCities].map(c => `${c.ilce} ${c.il}`).join(', ')
+        : `${selectedIlce} ${selectedIl}`.trim()
+      const saved = await saveSearch(sector, cityLabel, leads, saveNameInput || undefined)
       setSavedSearches(s => [saved, ...s])
       setShowSaveInput(false)
       setSaveNameInput('')
@@ -1441,16 +1488,44 @@ export default function AnalizPage() {
           {searchMode === 'bulk' && (
             <div>
               <label className={labelCls}>İlçe / Şehir</label>
-              <CityAutocomplete
-                value={cityDisplayValue}
-                onChange={(il, ilce) => {
-                  handleCityChange(il, ilce)
-                  setCityDisplayValue(il && ilce ? `${ilce}, ${il}` : '')
-                }}
-              />
-              {selectedIl && selectedIlce && (
+
+              {/* Seçili ilçe chip'leri */}
+              {extraCities.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mb-2">
+                  {extraCities.map((c, i) => (
+                    <span key={i} className="flex items-center gap-1 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-full px-2.5 py-0.5 text-xs font-semibold">
+                      {c.ilce}, {c.il}
+                      <button type="button" onClick={() => removeExtraCity(i)} className="ml-0.5 text-blue-400/60 hover:text-blue-300 leading-none">×</button>
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              <div className="flex gap-2">
+                <div className="flex-1">
+                  <CityAutocomplete
+                    value={cityDisplayValue}
+                    onChange={(il, ilce) => {
+                      handleCityChange(il, ilce)
+                      setCityDisplayValue(il && ilce ? `${ilce}, ${il}` : '')
+                    }}
+                  />
+                </div>
+                {hasCity && (
+                  <button
+                    type="button"
+                    onClick={addCurrentCity}
+                    title="Bu ilçeyi ekle ve yeni ilçe seç"
+                    className="shrink-0 px-3 py-2 rounded-xl bg-white/[0.07] border border-white/[0.12] text-zinc-400 hover:text-white hover:bg-white/[0.12] text-sm transition-colors"
+                  >
+                    +
+                  </button>
+                )}
+              </div>
+              {hasCity && (
                 <p className="text-[11px] text-zinc-600 mt-1.5">
                   Seçildi: <span className="text-zinc-400">{selectedIlce}, {selectedIl}</span>
+                  {extraCities.length === 0 && <span className="ml-1 text-zinc-700">— + ile birden fazla ilçe ekleyin</span>}
                 </p>
               )}
             </div>
