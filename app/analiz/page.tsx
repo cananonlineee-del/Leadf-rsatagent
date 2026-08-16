@@ -942,6 +942,32 @@ function LeadCard({
               <ScoreBar label="Ödeme Gücü"   value={lead.odemeGucu}   color="bg-blue-500" />
               <ScoreBar label="Açık Şiddeti" value={lead.acikSiddeti} color="bg-orange-500" />
             </div>
+
+            {/* Bölge Lideri Karşılaştırması */}
+            {lead.topCompetitor && (
+              <div className="mb-4">
+                <h5 className="text-[10px] font-bold text-zinc-600 uppercase tracking-widest mb-2">Bölge Lideri</h5>
+                <div className="bg-white/[0.04] border border-white/[0.08] rounded-xl p-3">
+                  <p className="text-xs font-semibold text-zinc-300 mb-2 truncate">{lead.topCompetitor.name}</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="bg-black/20 rounded-lg px-2.5 py-2">
+                      <div className="text-[10px] text-zinc-600 mb-0.5">Yorum (rakip)</div>
+                      <div className="text-sm font-bold text-red-400">{lead.topCompetitor.reviewCount.toLocaleString('tr-TR')}</div>
+                    </div>
+                    <div className="bg-black/20 rounded-lg px-2.5 py-2">
+                      <div className="text-[10px] text-zinc-600 mb-0.5">Yorum (bu işletme)</div>
+                      <div className="text-sm font-bold text-zinc-300">{lead.reviewCount.toLocaleString('tr-TR')}</div>
+                    </div>
+                  </div>
+                  {lead.topCompetitor.reviewCount > lead.reviewCount && (
+                    <p className="text-[11px] text-amber-400 mt-2 leading-relaxed">
+                      Rakip <span className="font-bold">{(lead.topCompetitor.reviewCount / Math.max(lead.reviewCount, 1)).toFixed(1)}×</span> daha fazla yorumla görünürlükte öne geçiyor.
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+
             {restGaps.length > 0 && (
               <>
                 <h5 className="text-[10px] font-bold text-zinc-600 uppercase tracking-widest mb-2">Diğer Eksikler</h5>
