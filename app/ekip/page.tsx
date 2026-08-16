@@ -13,12 +13,13 @@ interface TeamMember {
 }
 
 export default function EkipPage() {
-  const [members, setMembers]   = useState<TeamMember[]>([])
-  const [email, setEmail]       = useState('')
-  const [loading, setLoading]   = useState(true)
-  const [inviting, setInviting] = useState(false)
-  const [error, setError]       = useState<string | null>(null)
-  const [success, setSuccess]   = useState<string | null>(null)
+  const [members, setMembers]     = useState<TeamMember[]>([])
+  const [email, setEmail]         = useState('')
+  const [loading, setLoading]     = useState(true)
+  const [inviting, setInviting]   = useState(false)
+  const [error, setError]         = useState<string | null>(null)
+  const [success, setSuccess]     = useState<string | null>(null)
+  const [manualUrl, setManualUrl] = useState<string | null>(null)
 
   const supabase = createClient()
 
@@ -40,18 +41,38 @@ export default function EkipPage() {
     setInviting(true)
     setError(null)
     setSuccess(null)
+    setManualUrl(null)
 
-    const { error: err } = await supabase.from('team_members').insert({
-      member_email: email.trim().toLowerCase(),
-    })
+    try {
+      const res = await fetch('/api/invite', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email.trim() }),
+      })
+      const data = await res.json() as {
+        success?: boolean
+        error?: string
+        emailSent?: boolean
+        inviteUrl?: string
+      }
 
-    if (err) {
-      setError(err.message)
-    } else {
-      setSuccess(`${email} adresine davet gönderildi.`)
-      setEmail('')
-      await load()
+      if (!res.ok || data.error) {
+        setError(data.error ?? 'Bir hata oluştu.')
+      } else if (data.emailSent) {
+        setSuccess(`Davet e-postası ${email} adresine gönderildi.`)
+        setEmail('')
+        await load()
+      } else {
+        // E-posta gönderilemedi (RESEND_API_KEY yok) — URL'i göster
+        setSuccess('Üye eklendi. E-posta gönderilemedi; aşağıdaki linki paylaşın.')
+        setManualUrl(data.inviteUrl ?? null)
+        setEmail('')
+        await load()
+      }
+    } catch {
+      setError('Bağlantı hatası. Lütfen tekrar deneyin.')
     }
+
     setInviting(false)
   }
 
@@ -98,6 +119,25 @@ export default function EkipPage() {
           )}
           {success && (
             <p className="mt-2 text-xs text-emerald-400">{success}</p>
+          )}
+          {manualUrl && (
+            <div className="mt-3 bg-amber-500/10 border border-amber-500/20 rounded-xl px-3 py-3">
+              <p className="text-[11px] text-amber-400 font-semibold mb-1.5">
+                Bu davet linkini kopyalayıp paylaşın:
+              </p>
+              <div className="flex items-center gap-2">
+                <code className="flex-1 text-[10px] text-zinc-400 bg-black/30 rounded-lg px-2 py-1.5 break-all leading-relaxed">
+                  {manualUrl}
+                </code>
+                <button
+                  type="button"
+                  onClick={() => { navigator.clipboard.writeText(manualUrl) }}
+                  className="shrink-0 text-[11px] text-zinc-400 hover:text-white bg-white/[0.07] hover:bg-white/[0.12] rounded-lg px-2.5 py-1.5 transition-colors"
+                >
+                  Kopyala
+                </button>
+              </div>
+            </div>
           )}
         </div>
 
