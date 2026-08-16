@@ -28,7 +28,11 @@ export async function GET(request: Request) {
       const baseUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000'
       const url = `${baseUrl}/api/analyze?businessName=${encodeURIComponent(monitored.lead_data?.name ?? '')}&sector=${encodeURIComponent(monitored.sector)}&city=${encodeURIComponent(monitored.city)}`
 
-      const res = await fetch(url)
+      const res = await fetch(url, {
+        headers: {
+          Authorization: `Bearer ${process.env.CRON_SECRET}`,
+        },
+      })
       if (!res.ok) { results.push({ id: monitored.id, status: 'fetch_error' }); continue }
 
       const data = await res.json()

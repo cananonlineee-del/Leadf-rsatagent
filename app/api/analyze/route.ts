@@ -1,4 +1,11 @@
 import { type NextRequest } from 'next/server'
+import { createClient as createServerSupabaseClient } from '../../../lib/supabase/server'
+
+// ─── Rate Limit (kullanıcı başına dakikada 10 istek) ──────────────────────────
+// Serverless ortamında her instance bağımsız çalışır; bu yüzden bu global Map
+// yalnızca bir instance'ın memory'sini sınırlar. Auth kontrolüyle birlikte
+// kullanıldığında yeterli bir birincil koruma sağlar.
+const _rateLimit = new Map<string, { count: number; resetAt: number }>()
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -2451,6 +2458,39 @@ function createThrottle(maxConcurrent: number) {
 // ─── Route Handler ────────────────────────────────────────────────────────────
 
 export async function GET(request: NextRequest) {
+  // ── Auth & Rate Limit ──────────────────────────────────────────────────────
+  // Cron iç çağrısı: Authorization: Bearer <CRON_SECRET>
+  const authHeader = request.headers.get('authorization')
+  const isCron = process.env.CRON_SECRET
+    ? authHeader === `Bearer ${process.env.CRON_SECRET}`
+    : false
+
+  if (!isCron) {
+    // Standart kullanıcı: Supabase oturumu zorunlu
+    const supabase = await createServerSupabaseClient()
+    const { data: { user } } = await supabase.auth.getUser()
+
+    if (!user) {
+      return Response.json({ error: 'Oturum gerekli.' }, { status: 401 })
+    }
+
+    // Kullanıcı başına dakikada 10 istek
+    const now = Date.now()
+    const bucket = _rateLimit.get(user.id)
+    if (bucket && now < bucket.resetAt) {
+      if (bucket.count >= 10) {
+        return Response.json(
+          { error: 'Çok fazla istek. Lütfen bir dakika bekleyin.' },
+          { status: 429 },
+        )
+      }
+      bucket.count++
+    } else {
+      _rateLimit.set(user.id, { count: 1, resetAt: now + 60_000 })
+    }
+  }
+  // ──────────────────────────────────────────────────────────────────────────
+
   const params = request.nextUrl.searchParams
   const sector       = params.get('sector')?.trim()
   const city         = params.get('city')?.trim()
