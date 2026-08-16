@@ -1,9 +1,20 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import type { Lead, InstagramData, MetaAdData, FacebookData, TikTokData } from '../api/analyze/route'
 import { IL_ILCE, ILLER } from '../../lib/turkiye-il-ilce'
 import { Navbar } from '../components/navbar'
+import {
+  getCRMStatuses, upsertCRMStatus,
+  type CRMStatus, CRM_STATUS_LABELS, CRM_STATUS_BADGE,
+} from '../../lib/crm'
+import {
+  saveSearch, listSearches, loadSearch, deleteSearch,
+  type SavedSearch,
+} from '../../lib/savedSearches'
+import { generateLeadPDF } from '../../lib/pdf'
+import { listTemplates, applyTemplate, type MessageTemplate } from '../../lib/templates'
+import { createClient } from '../../lib/supabase/client'
 
 // ─── Yardımcı fonksiyonlar ────────────────────────────────────────────────────
 
@@ -327,6 +338,86 @@ const LOADING_STEPS = [
   { text: 'Skorlar hesaplanıyor…',              sub: 'Fırsat analizi tamamlanıyor' },
 ]
 
+// ─── SectorAutocomplete bileşeni ──────────────────────────────────────────────
+
+function SectorAutocomplete({
+  value,
+  onChange,
+}: {
+  value: string
+  onChange: (v: string) => void
+}) {
+  const match = ALL_SECTOR_OPTIONS.find(s => s.search === value)
+  const [query, setQuery] = useState(match?.label ?? value)
+  const [open, setOpen]   = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const m = ALL_SECTOR_OPTIONS.find(s => s.search === value)
+    setQuery(m ? m.label : value)
+  }, [value])
+
+  useEffect(() => {
+    function handler(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  const filtered = query.length >= 1
+    ? ALL_SECTOR_OPTIONS.filter(s =>
+        s.label.toLowerCase().includes(query.toLowerCase()) ||
+        s.search.toLowerCase().includes(query.toLowerCase()) ||
+        s.group.toLowerCase().includes(query.toLowerCase())
+      ).slice(0, 10)
+    : []
+
+  return (
+    <div ref={ref} className="relative">
+      <input
+        type="text"
+        placeholder="Sektör ara (örn: kuaför, restoran, diş kliniği)"
+        value={query}
+        autoComplete="off"
+        onChange={e => {
+          setQuery(e.target.value)
+          onChange(e.target.value)
+          setOpen(true)
+        }}
+        onFocus={() => { if (query.length >= 1) setOpen(true) }}
+        className="w-full bg-white/[0.07] border border-white/[0.12] text-white rounded-xl px-3 py-2.5 text-sm placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500/40 transition"
+      />
+      {open && filtered.length > 0 && (
+        <ul className="absolute z-50 left-0 right-0 top-full mt-1 bg-[#1c1c22] border border-white/[0.14] rounded-xl overflow-hidden shadow-2xl max-h-56 overflow-y-auto">
+          {filtered.map(s => (
+            <li key={s.search}>
+              <button
+                type="button"
+                onMouseDown={e => {
+                  e.preventDefault()
+                  setQuery(s.label)
+                  onChange(s.search)
+                  setOpen(false)
+                }}
+                className="w-full text-left px-4 py-2.5 text-sm hover:bg-white/[0.07] flex items-center justify-between transition-colors"
+              >
+                <span className="text-zinc-200 font-medium">{s.label}</span>
+                <span className="text-xs text-zinc-600 ml-2 shrink-0">{s.group}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {open && query.length >= 1 && filtered.length === 0 && (
+        <div className="absolute z-50 left-0 right-0 top-full mt-1 bg-[#1c1c22] border border-white/[0.12] rounded-xl px-4 py-3 text-xs text-zinc-600 shadow-xl">
+          Eşleşme yok — yazdığınız değer kullanılacak
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── CityAutocomplete bileşeni ────────────────────────────────────────────────
 
 function CityAutocomplete({
@@ -419,8 +510,11 @@ function MessagePreviewModal({
   initialType: 'short' | 'long'
   onClose: () => void
 }) {
-  const [type, setType]         = useState(initialType)
-  const [copied, setCopied]     = useState(false)
+  const [type, setType]               = useState(initialType)
+  const [copied, setCopied]           = useState(false)
+  const [useTemplate, setUseTemplate] = useState(false)
+  const [templates, setTemplates]     = useState<MessageTemplate[]>([])
+  const [selectedTpl, setSelectedTpl] = useState('')
 
   const shortMsg = buildShortMessage(lead, senderName, agencyName, agencyWebsite)
   const longMsg  = buildDetailedMessage(lead, senderName, agencyName, agencyWebsite)
@@ -428,10 +522,26 @@ function MessagePreviewModal({
   const [editedMsg, setEditedMsg] = useState(type === 'short' ? shortMsg : longMsg)
 
   useEffect(() => {
-    setEditedMsg(type === 'short' ? shortMsg : longMsg)
-    setCopied(false)
+    if (!useTemplate) {
+      setEditedMsg(type === 'short' ? shortMsg : longMsg)
+      setCopied(false)
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [type])
+  }, [type, useTemplate])
+
+  useEffect(() => {
+    listTemplates(lead.primaryType ?? undefined).then(setTemplates)
+  }, [lead.primaryType])
+
+  useEffect(() => {
+    if (!useTemplate || !selectedTpl) return
+    const tpl = templates.find(t => t.id === selectedTpl)
+    if (!tpl) return
+    const sender = { name: senderName, agency: agencyName, website: agencyWebsite }
+    const text = applyTemplate(type === 'short' ? tpl.short_template : tpl.long_template, lead, sender)
+    setEditedMsg(text)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedTpl, type, useTemplate])
 
   const waPhone = lead.phone ? toWaPhone(lead.phone) : null
 
@@ -485,8 +595,35 @@ function MessagePreviewModal({
           </div>
         </div>
 
+        {/* Şablon seçici */}
+        <div className="px-5 pt-3">
+          <label className="flex items-center gap-2 cursor-pointer mb-2">
+            <button
+              type="button"
+              onClick={() => setUseTemplate(v => !v)}
+              className={`w-8 h-4 rounded-full transition-colors relative ${useTemplate ? 'bg-blue-600' : 'bg-zinc-700'}`}
+            >
+              <span className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all ${useTemplate ? 'left-4' : 'left-0.5'}`} />
+            </button>
+            <span className="text-xs text-zinc-400">Hazır Şablon Kullan</span>
+          </label>
+
+          {useTemplate && (
+            <select
+              value={selectedTpl}
+              onChange={e => setSelectedTpl(e.target.value)}
+              className="w-full bg-white/[0.07] border border-white/[0.12] text-white rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/40 appearance-none cursor-pointer transition mb-2"
+            >
+              <option value="">Şablon seçin…</option>
+              {templates.map(t => (
+                <option key={t.id} value={t.id}>{t.name}{t.sector ? ` (${t.sector})` : ''}</option>
+              ))}
+            </select>
+          )}
+        </div>
+
         {/* Editable textarea */}
-        <div className="px-5 pt-3 pb-1">
+        <div className="px-5 pt-1 pb-1">
           <textarea
             value={editedMsg}
             onChange={e => setEditedMsg(e.target.value)}
@@ -534,16 +671,68 @@ function MessagePreviewModal({
 
 // ─── LeadCard ─────────────────────────────────────────────────────────────────
 
-function LeadCard({ lead, rank, senderName, agencyName, agencyWebsite, onPreview }: {
+type DetailTab = 'google' | 'web' | 'sosyal' | 'platform' | 'firsat'
+
+function LeadCard({
+  lead,
+  rank,
+  senderName,
+  agencyName,
+  agencyWebsite,
+  onPreview,
+  crmStatus,
+  crmNote,
+  onStatusChange,
+  onNoteChange,
+  onMonitor,
+  isMonitored,
+}: {
   lead: Lead
   rank: number
   senderName: string
   agencyName: string
   agencyWebsite: string
   onPreview: (type: 'short' | 'long') => void
+  crmStatus: CRMStatus
+  crmNote: string
+  onStatusChange: (status: CRMStatus) => void
+  onNoteChange: (note: string) => void
+  onMonitor: () => void
+  isMonitored: boolean
 }) {
-  const [expanded, setExpanded]     = useState(false)
+  const [expanded, setExpanded]       = useState(false)
+  const [activeTab, setActiveTab]     = useState<DetailTab>('google')
   const [showAllGaps, setShowAllGaps] = useState(false)
+  const [statusOpen, setStatusOpen]   = useState(false)
+  const [localNote, setLocalNote]     = useState(crmNote)
+  const [pdfLoading, setPdfLoading]   = useState(false)
+  const noteTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const statusRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => { setLocalNote(crmNote) }, [crmNote])
+
+  useEffect(() => {
+    function handler(e: MouseEvent) {
+      if (statusRef.current && !statusRef.current.contains(e.target as Node)) setStatusOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  function handleNoteChange(val: string) {
+    setLocalNote(val)
+    clearTimeout(noteTimer.current)
+    noteTimer.current = setTimeout(() => onNoteChange(val), 500)
+  }
+
+  async function handlePdf() {
+    setPdfLoading(true)
+    try {
+      await generateLeadPDF(lead, senderName, agencyName)
+    } finally {
+      setPdfLoading(false)
+    }
+  }
 
   const need  = needMeta(lead.score)
   const price = priceLevelLabel(lead.priceLevel)
@@ -570,7 +759,7 @@ function LeadCard({ lead, rank, senderName, agencyName, agencyWebsite, onPreview
   const adsUrgent =
     lead.websiteSource !== 'none' &&
     !lead.siteAnalysis?.hasPixel &&
-    !lead.siteAnalysis?.hasGoogleAds  // hasAnalytics tek başına yeterli değil — gerçek reklam kodu yok
+    !lead.siteAnalysis?.hasGoogleAds
 
   const services = [
     { label: 'Web Sitesi',      urgent: siteUrgent,   weight: lead.categoryProfile.website },
@@ -581,6 +770,62 @@ function LeadCard({ lead, rank, senderName, agencyName, agencyWebsite, onPreview
     if (a.urgent !== b.urgent) return a.urgent ? -1 : 1
     return b.weight - a.weight
   })
+
+  // ── Tab badge sayıları ──────────────────────────────────────────────────────
+  const _s = lead.siteAnalysis
+  const webBadgeCount = [
+    !lead.website,
+    _s && !_s.ssl,
+    _s && _s.mobileScore !== null && _s.mobileScore < 70,
+    _s && !_s.hasPixel && !_s.hasGoogleAds,
+    _s && !_s.hasSocialLinks,
+    _s && (_s.pageTitle === null || _s.pageTitle.length < 20),
+    _s && !_s.hasMetaDesc,
+    _s && !_s.pageHasPhone,
+    _s && !_s.hasWhatsApp,
+    _s && !_s.hasClickablePhone,
+    _s && !_s.hasBookingSystem,
+    _s && !_s.hasContactForm,
+    _s && !_s.hasLocalBusinessSchema,
+    _s && !_s.hasOnlinePayment && lead.categoryProfile.website >= 3,
+  ].filter(Boolean).length
+
+  const googleBadgeCount = [
+    lead.googleBusinessScore < 75,
+    lead.photoCount < 5,
+    !lead.hasOpeningHours,
+    lead.lastReviewDate && Math.floor((Date.now() - new Date(lead.lastReviewDate).getTime()) / 86_400_000) > 90,
+    lead.negativeReviewRate !== null && lead.negativeReviewRate > 40,
+    !lead.hasGoogleDescription,
+    lead.businessStatus !== 'OPERATIONAL',
+  ].filter(Boolean).length
+
+  const _ig2 = lead.instagram
+  const _fb2 = lead.facebook
+  const _tt2 = lead.tiktok
+  const socialBadgeCount = [
+    !lead.instagramHandle,
+    _ig2 && _ig2.activity !== 'active' && _ig2.activity !== 'unknown',
+    _ig2 && _ig2.bioLength !== null && _ig2.bioLength !== undefined && _ig2.bioLength < 80,
+    _ig2 && !_ig2.bioHasPhone,
+    _ig2 && !_ig2.bioHasUrl,
+    _ig2 && _ig2.engagementRate != null && _ig2.engagementRate < 3,
+    _ig2 && _ig2.weeklyPostFreq != null && _ig2.weeklyPostFreq < 2,
+    !_fb2,
+    _fb2 && _fb2.activity !== 'active' && _fb2.activity !== 'unknown',
+    _tt2 && _tt2.activity !== 'active',
+  ].filter(Boolean).length
+
+  const _plat2 = lead.platforms
+  const platformBadgeCount = _plat2 ? [
+    _plat2.yemeksepeti === false,
+    _plat2.getir === false,
+    _plat2.tripadvisor === false,
+    _plat2.marketplace === false,
+    _plat2.bookingPlatform === false,
+    !_plat2.inLocalPack,
+    !_plat2.youtubeHandle && !lead.youtubeHandle,
+  ].filter(Boolean).length : 0
 
   const igActivity: Record<InstagramData['activity'], { label: string; cls: string }> = {
     active:    { label: 'Aktif',         cls: 'text-emerald-400' },
@@ -606,9 +851,41 @@ function LeadCard({ lead, rank, senderName, agencyName, agencyWebsite, onPreview
             </div>
             <p className="text-[11px] text-zinc-500 leading-relaxed pl-8">{lead.address}</p>
           </div>
-          <div className={`shrink-0 rounded-xl px-3 py-2 text-center ${need.badgeCls}`}>
-            <div className="text-[9px] font-bold uppercase tracking-wider opacity-60">Reklam İhtiyacı</div>
-            <div className="text-sm font-black leading-tight mt-0.5">{need.label}</div>
+
+          {/* Sağ üst: Reklam ihtiyacı + CRM durum */}
+          <div className="flex flex-col items-end gap-1.5 shrink-0">
+            <div className={`rounded-xl px-3 py-2 text-center ${need.badgeCls}`}>
+              <div className="text-[9px] font-bold uppercase tracking-wider opacity-60">Reklam İhtiyacı</div>
+              <div className="text-sm font-black leading-tight mt-0.5">{need.label}</div>
+            </div>
+
+            {/* CRM durum rozeti + dropdown */}
+            <div ref={statusRef} className="relative">
+              <button
+                type="button"
+                onClick={() => setStatusOpen(v => !v)}
+                className={`text-[10px] font-bold px-2.5 py-1 rounded-full ${CRM_STATUS_BADGE[crmStatus]} flex items-center gap-1`}
+              >
+                {CRM_STATUS_LABELS[crmStatus]}
+                <span className="text-[8px]">▾</span>
+              </button>
+              {statusOpen && (
+                <div className="absolute right-0 top-full mt-1 w-32 bg-[#1c1c22] border border-white/[0.12] rounded-xl shadow-2xl overflow-hidden z-40">
+                  {(Object.keys(CRM_STATUS_LABELS) as CRMStatus[]).map(s => (
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() => { onStatusChange(s); setStatusOpen(false) }}
+                      className={`w-full text-left px-3 py-2 text-[11px] font-semibold transition-colors hover:bg-white/[0.07] ${
+                        s === crmStatus ? 'text-white' : 'text-zinc-400'
+                      }`}
+                    >
+                      {CRM_STATUS_LABELS[s]}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
@@ -621,6 +898,17 @@ function LeadCard({ lead, rank, senderName, agencyName, agencyWebsite, onPreview
         {/* Satış açısı */}
         <div className="rounded-xl bg-blue-500/[0.07] border border-blue-500/20 px-4 py-3">
           <p className="text-sm text-blue-200 leading-relaxed">{lead.pitch}</p>
+        </div>
+
+        {/* Not alanı */}
+        <div className="mt-3">
+          <input
+            type="text"
+            value={localNote}
+            onChange={e => handleNoteChange(e.target.value)}
+            placeholder="Not ekle… (otomatik kaydedilir)"
+            className="w-full bg-white/[0.04] border border-white/[0.08] text-zinc-300 rounded-xl px-3 py-2 text-xs placeholder-zinc-700 focus:outline-none focus:ring-1 focus:ring-blue-500/30 transition"
+          />
         </div>
       </div>
 
@@ -678,21 +966,53 @@ function LeadCard({ lead, rank, senderName, agencyName, agencyWebsite, onPreview
           ))}
         </div>
 
-        {/* WhatsApp mesaj butonları → önizleme modalini açar */}
-        <div className="flex gap-2 pt-3 border-t border-white/[0.09]">
+        {/* Buton grubu */}
+        <div className="flex items-center gap-2 pt-3 border-t border-white/[0.09]">
+          {/* Takibe Al — icon */}
+          <button
+            type="button"
+            onClick={onMonitor}
+            title={isMonitored ? 'Takipten Çıkar' : 'Takibe Al'}
+            className={`w-8 h-8 flex items-center justify-center rounded-lg border text-sm transition-colors shrink-0 ${
+              isMonitored
+                ? 'border-blue-500/40 bg-blue-500/10 text-blue-400'
+                : 'border-white/[0.12] text-zinc-500 hover:text-white hover:bg-white/[0.06]'
+            }`}
+          >
+            👁
+          </button>
+
+          {/* PDF — icon */}
+          <button
+            type="button"
+            onClick={handlePdf}
+            disabled={pdfLoading}
+            title="PDF Rapor İndir"
+            className="w-8 h-8 flex items-center justify-center rounded-lg border border-white/[0.12] text-zinc-500 hover:text-white hover:bg-white/[0.06] text-xs transition-colors shrink-0 disabled:opacity-50"
+          >
+            {pdfLoading ? (
+              <span className="w-3 h-3 border border-white/30 border-t-white rounded-full animate-spin" />
+            ) : '⬇'}
+          </button>
+
+          {/* Takip mesajı (contacted durumunda) */}
+          {crmStatus === 'contacted' && (
+            <button
+              type="button"
+              onClick={() => onPreview('short')}
+              className="px-2.5 py-2 rounded-lg border border-amber-500/30 text-amber-400 hover:bg-amber-500/10 text-xs font-semibold transition-colors shrink-0"
+            >
+              Takip
+            </button>
+          )}
+
+          {/* PRIMARY: Mesaj Gönder */}
           <button
             type="button"
             onClick={() => onPreview('short')}
-            className="flex-1 text-center text-xs font-semibold px-3 py-2 rounded-lg border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10 transition-colors"
-          >
-            Kısa Mesaj
-          </button>
-          <button
-            type="button"
-            onClick={() => onPreview('long')}
             className="flex-1 text-center text-xs font-bold px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white transition-colors"
           >
-            Detaylı Mesaj
+            Mesaj Gönder →
           </button>
         </div>
       </div>
@@ -705,12 +1025,44 @@ function LeadCard({ lead, rank, senderName, agencyName, agencyWebsite, onPreview
         {expanded ? 'Detayları gizle ▲' : 'Detayları gör ▼'}
       </button>
 
-      {/* ── KATMAN 3: Açılır detay (accordion) ─────────────────────────── */}
+      {/* ── KATMAN 3: Tab detayları ──────────────────────────────────────── */}
       {expanded && (
-        <div className="border-t border-white/[0.08] bg-[#17171d] divide-y divide-white/[0.06]">
+        <div className="border-t border-white/[0.08]">
+
+          {/* Tab bar */}
+          <div className="flex items-center overflow-x-auto border-b border-white/[0.06] bg-[#17171d] px-2 gap-0.5">
+            {([
+              { id: 'google',   label: 'Google',   count: googleBadgeCount },
+              { id: 'web',      label: 'Web',       count: webBadgeCount },
+              { id: 'sosyal',   label: 'Sosyal',    count: socialBadgeCount },
+              ...(lead.platforms ? [{ id: 'platform', label: 'Platform', count: platformBadgeCount }] : []),
+              { id: 'firsat',   label: 'Fırsat',    count: 0 },
+            ] as { id: DetailTab; label: string; count: number }[]).map(tab => (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveTab(tab.id)}
+                className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-semibold whitespace-nowrap border-b-2 transition-colors shrink-0 ${
+                  activeTab === tab.id
+                    ? 'border-blue-500 text-white'
+                    : 'border-transparent text-zinc-600 hover:text-zinc-400'
+                }`}
+              >
+                {tab.label}
+                {tab.count > 0 && (
+                  <span className="inline-flex items-center justify-center min-w-[1rem] h-4 text-[9px] font-black bg-red-500/80 text-white rounded-full px-1 leading-none">
+                    {tab.count}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+
+          {/* Tab içerikleri */}
+          <div className="bg-[#17171d]">
 
           {/* Web / Site */}
-          {(() => {
+          {activeTab === 'web' && (() => {
             const s = lead.siteAnalysis
             const siteProblems: React.ReactNode[] = []
             if (!lead.website) {
@@ -774,7 +1126,7 @@ function LeadCard({ lead, rank, senderName, agencyName, agencyWebsite, onPreview
           })()}
 
           {/* Google Business */}
-          {(() => {
+          {activeTab === 'google' && (() => {
             const gProblems: React.ReactNode[] = []
             if (lead.googleBusinessScore < 75)
               gProblems.push(<Row key="score" label="Profil Dolgunluğu"><span className={`text-xs font-semibold ${lead.googleBusinessScore < 50 ? 'text-red-400' : 'text-amber-400'}`}>%{lead.googleBusinessScore}</span></Row>)
@@ -784,7 +1136,6 @@ function LeadCard({ lead, rank, senderName, agencyName, agencyWebsite, onPreview
               gProblems.push(<Row key="hrs" label="Çalışma Saatleri"><span className="text-xs font-medium text-red-400">✕ Girilmemiş</span></Row>)
             if (lead.lastReviewDate && Math.floor((Date.now() - new Date(lead.lastReviewDate).getTime()) / 86_400_000) > 90)
               gProblems.push(<Row key="rev" label="Son Yorum"><span className="text-xs font-semibold text-red-400">{formatDate(lead.lastReviewDate)}</span></Row>)
-            {/* Eşik yükseltildi: Google max 5 yorum döndürür, küçük örneklemden yüksek hassasiyette oran çıkarılmaz */}
             if (lead.negativeReviewRate !== null && lead.negativeReviewRate > 40)
               gProblems.push(<Row key="neg" label="Olumsuz Yorum"><span className={`text-xs font-semibold ${lead.negativeReviewRate > 60 ? 'text-red-400' : 'text-amber-400'}`}>%{lead.negativeReviewRate} <span className="text-zinc-600 font-normal">(örn.)</span></span></Row>)
             if (!lead.hasGoogleDescription)
@@ -809,7 +1160,7 @@ function LeadCard({ lead, rank, senderName, agencyName, agencyWebsite, onPreview
           })()}
 
           {/* Sosyal Medya */}
-          {(() => {
+          {activeTab === 'sosyal' && (() => {
             const ig = lead.instagram
             const igProblems: React.ReactNode[] = []
             if (ig) {
@@ -897,7 +1248,7 @@ function LeadCard({ lead, rank, senderName, agencyName, agencyWebsite, onPreview
           })()}
 
           {/* Platformlar */}
-          {lead.platforms && (() => {
+          {activeTab === 'platform' && lead.platforms && (() => {
             const plat = lead.platforms
             const platProblems: React.ReactNode[] = []
             if (plat.yemeksepeti === false) platProblems.push(<Row key="ys" label="Yemeksepeti"><span className="text-xs font-medium text-red-400">✕ Listelenmemiş</span></Row>)
@@ -932,7 +1283,7 @@ function LeadCard({ lead, rank, senderName, agencyName, agencyWebsite, onPreview
           })()}
 
           {/* Fırsat Analizi */}
-          <section className="px-5 py-4">
+          {activeTab === 'firsat' && <section className="px-5 py-4">
             <h4 className="text-[10px] font-bold text-zinc-600 uppercase tracking-widest mb-3">Fırsat Analizi</h4>
             <div className="space-y-3 mb-4">
               <ScoreBar label="Ödeme Gücü"   value={lead.odemeGucu}   color="bg-blue-500" />
@@ -959,9 +1310,35 @@ function LeadCard({ lead, rank, senderName, agencyName, agencyWebsite, onPreview
                 )}
               </>
             )}
-          </section>
+          </section>}
+          </div>
         </div>
       )}
+    </div>
+  )
+}
+
+// ─── Skeleton kart (yükleme yer tutucusu) ─────────────────────────────────────
+
+function SkeletonCard() {
+  return (
+    <div className="bg-[#1c1c22] border border-white/[0.07] rounded-2xl p-5 overflow-hidden relative">
+      <div className="absolute inset-0 -translate-x-full animate-[shimmer_1.6s_infinite] bg-gradient-to-r from-transparent via-white/[0.04] to-transparent" />
+      <div className="flex items-start justify-between gap-3 mb-4">
+        <div className="flex-1 space-y-2">
+          <div className="h-3.5 w-2/3 bg-white/[0.06] rounded-full" />
+          <div className="h-2.5 w-1/2 bg-white/[0.04] rounded-full" />
+        </div>
+        <div className="w-16 h-10 bg-white/[0.05] rounded-xl shrink-0" />
+      </div>
+      <div className="h-2.5 w-full bg-white/[0.05] rounded-full mb-2" />
+      <div className="h-2.5 w-4/5 bg-white/[0.04] rounded-full mb-4" />
+      <div className="h-12 bg-white/[0.04] rounded-xl mb-3" />
+      <div className="flex gap-2 mt-3 pt-3 border-t border-white/[0.07]">
+        <div className="w-8 h-8 bg-white/[0.05] rounded-lg shrink-0" />
+        <div className="w-8 h-8 bg-white/[0.05] rounded-lg shrink-0" />
+        <div className="flex-1 h-8 bg-white/[0.08] rounded-lg" />
+      </div>
     </div>
   )
 }
@@ -980,7 +1357,6 @@ function ProgressLoader({ step }: { step: number }) {
         <p className="text-sm font-semibold text-zinc-200">{current.text}</p>
         <p className="text-xs text-zinc-600 mt-1">{current.sub}</p>
       </div>
-      {/* İlerleme nokta barı */}
       <div className="flex items-center gap-2">
         {LOADING_STEPS.map((_, i) => (
           <div
@@ -1090,6 +1466,10 @@ const SECTOR_GROUPS: { label: string; options: { label: string; search: string }
   },
 ]
 
+const ALL_SECTOR_OPTIONS = SECTOR_GROUPS.flatMap(g =>
+  g.options.map(o => ({ ...o, group: g.label }))
+)
+
 // ─── Ortak input/select sınıfları ─────────────────────────────────────────────
 
 const inputCls  = 'w-full bg-white/[0.07] border border-white/[0.12] text-white rounded-xl px-3 py-2.5 text-sm placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500/40 transition'
@@ -1114,7 +1494,7 @@ export default function AnalizPage() {
   const [searched, setSearched] = useState(false)
 
   // Filtre
-  const [filter, setFilter] = useState<'all' | 'high' | 'mid' | 'low'>('all')
+  const [filter, setFilter] = useState<'all' | 'high' | 'mid' | 'low' | CRMStatus>('all')
 
   // Mesaj önizleme
   const [previewLead, setPreviewLead]   = useState<Lead | null>(null)
@@ -1126,6 +1506,22 @@ export default function AnalizPage() {
   const [agencyWebsite, setAgencyWebsite]   = useState('')
   const [senderOpen, setSenderOpen]         = useState(false)
 
+  // CRM
+  const [crmMap, setCrmMap] = useState<Record<string, { status: CRMStatus; note: string }>>({})
+
+  // Monitored
+  const [monitoredIds, setMonitoredIds] = useState<Set<string>>(new Set())
+
+  // Kayıtlı aramalar
+  const [savedSearches, setSavedSearches]       = useState<SavedSearch[]>([])
+  const [savedPanelOpen, setSavedPanelOpen]     = useState(false)
+  const [saveNameInput, setSaveNameInput]       = useState('')
+  const [showSaveInput, setShowSaveInput]       = useState(false)
+  const [savingSearch, setSavingSearch]         = useState(false)
+  const [isLoggedIn, setIsLoggedIn]             = useState(false)
+
+  const supabase = createClient()
+
   // ── localStorage: yükle ──
   useEffect(() => {
     try {
@@ -1136,7 +1532,7 @@ export default function AnalizPage() {
         if (saved.agency)  setAgencyName(saved.agency)
         if (saved.website) setAgencyWebsite(saved.website)
       } else {
-        setSenderOpen(true) // İlk ziyarette aç
+        setSenderOpen(true)
       }
     } catch { /* ignore */ }
   }, [])
@@ -1150,6 +1546,20 @@ export default function AnalizPage() {
     } catch { /* ignore */ }
   }, [senderName, agencyName, agencyWebsite])
 
+  // ── Auth durumu + kayıtlı aramalar ──
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => {
+      if (data.user) {
+        setIsLoggedIn(true)
+        listSearches().then(setSavedSearches)
+        // Monitored leads
+        supabase.from('monitored_leads').select('place_id').then(({ data: monData }) => {
+          setMonitoredIds(new Set((monData ?? []).map((r: { place_id: string }) => r.place_id)))
+        })
+      }
+    })
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── Aşamalı yükleniyor adımı ──
   useEffect(() => {
     if (!loading) { setLoadingStep(0); return }
@@ -1158,6 +1568,20 @@ export default function AnalizPage() {
     }, 9_000)
     return () => clearInterval(id)
   }, [loading])
+
+  // ── Leadler değişince CRM durumlarını yükle ──
+  useEffect(() => {
+    if (leads.length === 0 || !isLoggedIn) return
+    const placeIds = leads.map(l => l.placeId).filter(Boolean) as string[]
+    if (placeIds.length === 0) return
+    getCRMStatuses(placeIds).then(data => {
+      const map: Record<string, { status: CRMStatus; note: string }> = {}
+      for (const id of placeIds) {
+        map[id] = data[id] ?? { status: 'new', note: '' }
+      }
+      setCrmMap(map)
+    })
+  }, [leads, isLoggedIn]) // eslint-disable-line react-hooks/exhaustive-deps
 
   function handleCityChange(il: string, ilce: string) {
     setSelectedIl(il)
@@ -1172,6 +1596,7 @@ export default function AnalizPage() {
     setLeads([])
     setSearched(false)
     setFilter('all')
+    setCrmMap({})
 
     try {
       const url = searchMode === 'single'
@@ -1194,8 +1619,70 @@ export default function AnalizPage() {
       : sector.trim().length > 0 && selectedIl.length > 0 && selectedIlce.length > 0
   )
 
-  // Filtrelenmiş sonuçlar
-  const filteredLeads = filter === 'all' ? leads
+  // ── CRM handlers ──
+  const handleStatusChange = useCallback(async (lead: Lead, status: CRMStatus) => {
+    if (!lead.placeId) return
+    setCrmMap(m => ({ ...m, [lead.placeId!]: { ...m[lead.placeId!] ?? { note: '' }, status } }))
+    await upsertCRMStatus(lead.placeId, lead, status, crmMap[lead.placeId]?.note)
+  }, [crmMap])
+
+  const handleNoteChange = useCallback(async (lead: Lead, note: string) => {
+    if (!lead.placeId) return
+    setCrmMap(m => ({ ...m, [lead.placeId!]: { ...m[lead.placeId!] ?? { status: 'new' }, note } }))
+    await upsertCRMStatus(lead.placeId, lead, crmMap[lead.placeId]?.status ?? 'new', note)
+  }, [crmMap])
+
+  // ── Monitor handler ──
+  async function handleMonitor(lead: Lead) {
+    if (!lead.placeId || !isLoggedIn) return
+    if (monitoredIds.has(lead.placeId)) return // already monitored
+
+    await supabase.from('monitored_leads').upsert({
+      place_id:  lead.placeId,
+      sector,
+      city:      `${selectedIlce} ${selectedIl}`.trim(),
+      lead_data: lead,
+      last_score: lead.score,
+      notify_score_drop:  true,
+      notify_ig_inactive: true,
+    }, { onConflict: 'user_id,place_id' })
+
+    setMonitoredIds(s => new Set([...s, lead.placeId!]))
+  }
+
+  // ── Kayıtlı aramalar ──
+  async function handleSaveSearch() {
+    setSavingSearch(true)
+    try {
+      const saved = await saveSearch(sector, `${selectedIlce} ${selectedIl}`.trim(), leads, saveNameInput || undefined)
+      setSavedSearches(s => [saved, ...s])
+      setShowSaveInput(false)
+      setSaveNameInput('')
+    } finally {
+      setSavingSearch(false)
+    }
+  }
+
+  async function handleLoadSearch(id: string) {
+    const s = await loadSearch(id)
+    if (!s) return
+    setLeads(s.leads)
+    setSearched(true)
+    setSavedPanelOpen(false)
+  }
+
+  async function handleDeleteSearch(id: string) {
+    await deleteSearch(id)
+    setSavedSearches(s => s.filter(x => x.id !== id))
+  }
+
+  // ── Filtrelenmiş sonuçlar ──
+  const CRM_FILTER_KEYS: CRMStatus[] = ['new', 'contacted', 'in_progress', 'closed', 'rejected']
+  const isCrmFilter = CRM_FILTER_KEYS.includes(filter as CRMStatus)
+
+  const filteredLeads = isCrmFilter
+    ? leads.filter(l => l.placeId && (crmMap[l.placeId]?.status ?? 'new') === filter)
+    : filter === 'all'  ? leads
     : filter === 'high' ? leads.filter(l => l.score >= 70)
     : filter === 'mid'  ? leads.filter(l => l.score >= 40 && l.score < 70)
     : leads.filter(l => l.score < 40)
@@ -1231,6 +1718,41 @@ export default function AnalizPage() {
           </p>
         </div>
 
+        {/* Kayıtlı Aramalar paneli (yalnızca giriş yaptıysa) */}
+        {isLoggedIn && savedSearches.length > 0 && (
+          <div className="mb-4">
+            <button
+              onClick={() => setSavedPanelOpen(v => !v)}
+              className="w-full flex items-center justify-between px-4 py-2.5 bg-white/[0.04] border border-white/[0.08] rounded-xl hover:bg-white/[0.07] transition-colors text-xs"
+            >
+              <span className="text-zinc-400 font-semibold">Kayıtlı Aramalar ({savedSearches.length})</span>
+              <span className="text-zinc-600">{savedPanelOpen ? '▲' : '▼'}</span>
+            </button>
+
+            {savedPanelOpen && (
+              <div className="mt-1 bg-[#1c1c22] border border-white/[0.10] rounded-xl overflow-hidden">
+                {savedSearches.map(s => (
+                  <div key={s.id} className="flex items-center gap-2 px-4 py-2.5 border-b border-white/[0.06] last:border-0 hover:bg-white/[0.04] transition-colors">
+                    <button
+                      onClick={() => handleLoadSearch(s.id)}
+                      className="flex-1 text-left min-w-0"
+                    >
+                      <p className="text-xs font-semibold text-zinc-200 truncate">{s.name ?? `${s.sector} — ${s.city}`}</p>
+                      <p className="text-[10px] text-zinc-600">{s.lead_count} lead · {new Intl.DateTimeFormat('tr-TR', { day: 'numeric', month: 'short' }).format(new Date(s.created_at))}</p>
+                    </button>
+                    <button
+                      onClick={() => handleDeleteSearch(s.id)}
+                      className="text-zinc-700 hover:text-red-400 transition-colors text-xs shrink-0"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Form Kartı */}
         <form onSubmit={handleSubmit} className="bg-[#1c1c22] border border-white/[0.12] rounded-2xl p-5 shadow-2xl shadow-black/40 space-y-4">
 
@@ -1259,7 +1781,6 @@ export default function AnalizPage() {
           {/* ── Sektör + hızlı chip'ler ── */}
           <div>
             <label className={labelCls}>Sektör</label>
-            {/* Popüler sektör chip'leri */}
             <div className="flex flex-wrap gap-1.5 mb-2">
               {POPULAR_SECTORS.map(ps => (
                 <button
@@ -1276,20 +1797,7 @@ export default function AnalizPage() {
                 </button>
               ))}
             </div>
-            <select
-              value={sector}
-              onChange={e => setSector(e.target.value)}
-              className={selectCls}
-            >
-              <option value="">Tümünü gör…</option>
-              {SECTOR_GROUPS.map(group => (
-                <optgroup key={group.label} label={group.label}>
-                  {group.options.map(opt => (
-                    <option key={opt.search} value={opt.search}>{opt.label}</option>
-                  ))}
-                </optgroup>
-              ))}
-            </select>
+            <SectorAutocomplete value={sector} onChange={setSector} />
           </div>
 
           {/* ── Bölge Tara: şehir autocomplete ── */}
@@ -1358,7 +1866,7 @@ export default function AnalizPage() {
             {senderOpen && (
               <div className="border-t border-white/[0.08] px-4 py-4 space-y-3">
                 <p className="text-[11px] text-zinc-600">WhatsApp mesajlarına eklenecek bilgiler. Bir kez doldurman yeterli.</p>
-                <div className="flex gap-3">
+                <div className="flex flex-col sm:flex-row gap-3">
                   <div className="flex-1">
                     <label className={labelCls}>Adınız</label>
                     <input
@@ -1407,7 +1915,16 @@ export default function AnalizPage() {
         </form>
 
         {/* Yükleniyor */}
-        {loading && <ProgressLoader step={loadingStep} />}
+        {loading && (
+          <>
+            <ProgressLoader step={loadingStep} />
+            <div className="space-y-4 mt-2 opacity-60">
+              <SkeletonCard />
+              <SkeletonCard />
+              <SkeletonCard />
+            </div>
+          </>
+        )}
 
         {/* Hata */}
         {error && !loading && (
@@ -1429,6 +1946,43 @@ export default function AnalizPage() {
         {leads.length > 0 && !loading && (
           <div className="mt-8">
 
+            {/* Kaydetme alanı */}
+            {isLoggedIn && (
+              <div className="flex items-center gap-2 mb-4">
+                {!showSaveInput ? (
+                  <button
+                    onClick={() => setShowSaveInput(true)}
+                    className="text-xs border border-white/[0.15] text-zinc-400 hover:text-white hover:border-white/30 px-3 py-1.5 rounded-lg transition-colors"
+                  >
+                    Bu aramayı kaydet
+                  </button>
+                ) : (
+                  <>
+                    <input
+                      type="text"
+                      placeholder="Arama adı (opsiyonel)"
+                      value={saveNameInput}
+                      onChange={e => setSaveNameInput(e.target.value)}
+                      className="flex-1 bg-white/[0.07] border border-white/[0.12] text-white rounded-xl px-3 py-1.5 text-xs placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-blue-500/40 transition"
+                    />
+                    <button
+                      onClick={handleSaveSearch}
+                      disabled={savingSearch}
+                      className="bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold px-3 py-1.5 rounded-xl transition-colors disabled:opacity-50 shrink-0"
+                    >
+                      {savingSearch ? '…' : 'Kaydet'}
+                    </button>
+                    <button
+                      onClick={() => setShowSaveInput(false)}
+                      className="text-zinc-600 hover:text-white text-xs px-2 py-1.5 transition-colors"
+                    >
+                      İptal
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+
             {/* Özet + filtre */}
             <div className="bg-white/[0.04] border border-white/[0.09] rounded-xl px-4 py-3 flex flex-col sm:flex-row sm:items-center gap-3 mb-5">
               <p className="text-zinc-400 text-sm flex-1 min-w-0">
@@ -1437,7 +1991,7 @@ export default function AnalizPage() {
                   : <><span className="text-white font-semibold">{leads.length} işletme</span>{' '}— reklam ihtiyacına göre sıralandı</>
                 }
               </p>
-              <div className="flex gap-1.5 shrink-0">
+              <div className="flex flex-wrap gap-1.5 shrink-0">
                 {([
                   { key: 'all',  label: 'Tümü', count: leads.length, cls: 'text-zinc-300 border-white/15 bg-white/[0.06]', inactCls: 'text-zinc-600 border-white/[0.06]' },
                   { key: 'high', label: 'Yüksek', count: countByLevel(70, 101), cls: 'text-red-400 border-red-500/30 bg-red-500/10', inactCls: 'text-zinc-600 border-white/[0.06]' },
@@ -1454,6 +2008,20 @@ export default function AnalizPage() {
                     {f.label}{f.key !== 'all' && ` (${f.count})`}
                   </button>
                 ))}
+
+                {/* CRM filtre (giriş yapmışsa) */}
+                {isLoggedIn && (
+                  <select
+                    value={isCrmFilter ? filter : ''}
+                    onChange={e => setFilter((e.target.value as CRMStatus) || 'all')}
+                    className="text-[11px] px-2 py-1 rounded-full border border-white/[0.12] bg-[#1c1c22] text-zinc-400 focus:outline-none cursor-pointer"
+                  >
+                    <option value="">CRM Filtre…</option>
+                    {CRM_FILTER_KEYS.map(k => (
+                      <option key={k} value={k}>{CRM_STATUS_LABELS[k]}</option>
+                    ))}
+                  </select>
+                )}
               </div>
             </div>
 
@@ -1464,17 +2032,27 @@ export default function AnalizPage() {
             )}
 
             <div className="space-y-4">
-              {filteredLeads.map(lead => (
-                <LeadCard
-                  key={`${lead.name}-${lead.address}`}
-                  lead={lead}
-                  rank={leads.indexOf(lead) + 1}
-                  senderName={senderName}
-                  agencyName={agencyName}
-                  agencyWebsite={agencyWebsite}
-                  onPreview={type => { setPreviewLead(lead); setPreviewType(type) }}
-                />
-              ))}
+              {filteredLeads.map(lead => {
+                const pid = lead.placeId ?? `${lead.name}-${lead.address}`
+                const crm = crmMap[pid] ?? { status: 'new' as CRMStatus, note: '' }
+                return (
+                  <LeadCard
+                    key={pid}
+                    lead={lead}
+                    rank={leads.indexOf(lead) + 1}
+                    senderName={senderName}
+                    agencyName={agencyName}
+                    agencyWebsite={agencyWebsite}
+                    onPreview={type => { setPreviewLead(lead); setPreviewType(type) }}
+                    crmStatus={crm.status}
+                    crmNote={crm.note}
+                    onStatusChange={status => handleStatusChange(lead, status)}
+                    onNoteChange={note => handleNoteChange(lead, note)}
+                    onMonitor={() => handleMonitor(lead)}
+                    isMonitored={!!lead.placeId && monitoredIds.has(lead.placeId)}
+                  />
+                )
+              })}
             </div>
 
             <p className="text-xs text-zinc-700 text-center mt-6 pb-8">

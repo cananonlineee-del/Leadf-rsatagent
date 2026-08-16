@@ -1,15 +1,42 @@
 @import "tailwindcss";
 
+/* ─── Design tokens ──────────────────────────────────────────────────────────── */
+
 :root {
   --background: #ffffff;
   --foreground: #171717;
+
+  /* Brand surface palette */
+  --surface-app:   #111115;
+  --surface-card:  #1c1c22;
+  --surface-hover: #17171d;
+
+  /* Border opacities */
+  --border-card:   rgba(255, 255, 255, 0.12);
+  --border-subtle: rgba(255, 255, 255, 0.07);
+
+  /* Border radii */
+  --radius-card:  1rem;     /* 16px = rounded-2xl */
+  --radius-btn:   0.75rem;  /* 12px = rounded-xl  */
+  --radius-input: 0.75rem;
+  --radius-tag:   9999px;
+
+  /* Typography scale */
+  --text-label:   0.625rem;  /* 10px — uppercase labels */
+  --text-body-sm: 0.75rem;   /* 12px — card body        */
+  --text-body:    0.875rem;  /* 14px — default body      */
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-background:    var(--background);
+  --color-foreground:    var(--foreground);
+  --font-sans:           var(--font-geist-sans);
+  --font-mono:           var(--font-geist-mono);
+
+  /* Surface tokens → bg-surface-app, bg-surface-card, bg-surface-hover */
+  --color-surface-app:   var(--surface-app);
+  --color-surface-card:  var(--surface-card);
+  --color-surface-hover: var(--surface-hover);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -19,8 +46,28 @@
   }
 }
 
+/* ─── Base ───────────────────────────────────────────────────────────────────── */
+
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+/* ─── Animations ─────────────────────────────────────────────────────────────── */
+
+@keyframes shimmer {
+  100% { transform: translateX(200%); }
+}
+
+/* ─── Reduced motion ─────────────────────────────────────────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration:       0.01ms !important;
+    animation-iteration-count: 1     !important;
+    transition-duration:      0.01ms !important;
+  }
 }

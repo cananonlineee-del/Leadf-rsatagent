@@ -178,6 +178,7 @@ export interface PlatformPresence {
 }
 
 export interface Lead {
+  placeId: string
   name: string
   address: string
   phone: string | null
@@ -245,23 +246,30 @@ async function fetchCandidates(
     if (pageToken) body.pageToken = pageToken
 
     let data: { places?: Phase1Place[]; nextPageToken?: string } = {}
-    try {
-      const res = await fetch(
-        `https://places.googleapis.com/v1/places:searchText?key=${apiKey}`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Goog-FieldMask': PHASE1_FIELDS,
+    let fetchOk = false
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        if (attempt > 0) await new Promise<void>(r => setTimeout(r, 1000 * attempt))
+        const res = await fetch(
+          `https://places.googleapis.com/v1/places:searchText?key=${apiKey}`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Goog-FieldMask': PHASE1_FIELDS,
+            },
+            body: JSON.stringify(body),
+            cache: 'no-store',
           },
-          body: JSON.stringify(body),
-          cache: 'no-store',
-        },
-      )
-      data = await res.json()
-    } catch {
-      break
+        )
+        data = await res.json()
+        fetchOk = true
+        break
+      } catch {
+        // retry
+      }
     }
+    if (!fetchOk) break
 
     const batch = data.places ?? []
     allPlaces.push(...batch)
@@ -2365,6 +2373,7 @@ function buildLead(
   )
 
   return {
+    placeId: c.placeId,
     name: c.name,
     address: c.address,
     phone: details.nationalPhoneNumber ?? null,

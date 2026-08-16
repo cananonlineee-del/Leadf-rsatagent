@@ -345,7 +345,7 @@ export default function LandingPage() {
             <div data-reveal data-delay="300" className="mt-10 flex flex-wrap justify-center gap-6 text-xs text-zinc-600">
               {[
                 { label: 'Paralel API çağrısı', val: '6' },
-                { label: 'Toplam sinyal', val: '46' },
+                { label: 'Toplam sinyal', val: String(TOTAL_SIGNALS) },
                 { label: 'Ortalama süre', val: '~20 sn' },
                 { label: 'Kayıt gerekmez', val: '✓' },
               ].map(s => (
@@ -365,7 +365,7 @@ export default function LandingPage() {
           <div className="max-w-5xl mx-auto">
 
             <div data-reveal className="text-center mb-16">
-              <p className="text-[11px] text-zinc-600 uppercase tracking-widest mb-3">46 Sinyal</p>
+              <p className="text-[11px] text-zinc-600 uppercase tracking-widest mb-3">{TOTAL_SIGNALS} Sinyal</p>
               <h2 className="text-4xl font-black text-white mb-3">
                 Rakipleriniz bunları<br />manuel kontrol eder.
               </h2>
@@ -494,14 +494,48 @@ export default function LandingPage() {
               Ücretsiz Analiz Başlat →
             </Link>
             <p className="text-zinc-700 text-xs mt-6">
-              <Counter to={46} /> sinyal · 6 kaynak · ~20 saniye
+              <Counter to={TOTAL_SIGNALS} /> sinyal · 6 kaynak · ~20 saniye
             </p>
           </div>
         </section>
 
         {/* Footer */}
-        <footer className="text-zinc-700 text-xs text-center py-10 border-t border-white/[0.05]">
-          © 2026 Leadbulucu
+        <footer className="border-t border-white/[0.05] py-12 px-6">
+          <div className="max-w-5xl mx-auto">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-8">
+
+              {/* Sol: logo + açıklama */}
+              <div className="shrink-0">
+                <div className="flex items-center gap-2.5 mb-2">
+                  <div className="w-5 h-5 rounded bg-blue-600 flex items-center justify-center shrink-0">
+                    <span className="text-white text-[10px] font-black leading-none">■</span>
+                  </div>
+                  <span className="text-white font-bold text-sm tracking-tight">Leadbulucu</span>
+                </div>
+                <p className="text-zinc-700 text-xs max-w-[200px] leading-relaxed">
+                  Google Maps verisiyle dijital fırsat analizi. 58 sinyal, ~20 saniye.
+                </p>
+                <p className="text-zinc-800 text-xs mt-3">© 2026 Leadbulucu. Tüm hakları saklıdır.</p>
+              </div>
+
+              {/* Orta: sayfa linkleri */}
+              <div className="flex flex-col gap-2">
+                <p className="text-[10px] text-zinc-700 uppercase tracking-widest font-bold mb-1">Uygulama</p>
+                <a href="/analiz" className="text-xs text-zinc-600 hover:text-zinc-400 transition-colors">Analiz</a>
+                <a href="/sablonlar" className="text-xs text-zinc-600 hover:text-zinc-400 transition-colors">Şablonlar</a>
+                <a href="/takip" className="text-xs text-zinc-600 hover:text-zinc-400 transition-colors">Takip & Bildirimler</a>
+                <a href="/giris" className="text-xs text-zinc-600 hover:text-zinc-400 transition-colors">Giriş / Kayıt</a>
+              </div>
+
+              {/* Sağ: yasal + iletişim */}
+              <div className="flex flex-col gap-2">
+                <p className="text-[10px] text-zinc-700 uppercase tracking-widest font-bold mb-1">Yasal</p>
+                <span className="text-xs text-zinc-700 cursor-default">Gizlilik Politikası</span>
+                <span className="text-xs text-zinc-700 cursor-default">KVKK Aydınlatma Metni</span>
+                <span className="text-xs text-zinc-700 cursor-default">Kullanım Koşulları</span>
+              </div>
+            </div>
+          </div>
         </footer>
       </div>
     </>
