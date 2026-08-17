@@ -23,7 +23,15 @@ function TemplateCard({
   const [showLong, setShowLong] = useState(false)
   const [copied, setCopied]     = useState(false)
 
-  const previewSender = { name: 'Siz', agency: 'Ajansınız', website: 'www.ajans.com' }
+  const stored = (() => {
+    if (typeof window === 'undefined') return null
+    try { return JSON.parse(localStorage.getItem('lb_sender') ?? 'null') } catch { return null }
+  })()
+  const previewSender = {
+    name:    stored?.name    || 'Siz',
+    agency:  stored?.agency  || 'Ajansınız',
+    website: stored?.website || 'www.ajans.com',
+  }
   const previewText = applyTemplate(
     showLong ? template.long_template : template.short_template,
     DEMO_LEAD as never,
@@ -107,7 +115,15 @@ export default function SablonlarPage() {
   const [saving, setSaving]           = useState(false)
   const [livePreviewShort, setLivePreviewShort] = useState(true)
 
-  const demoSender = { name: 'Siz', agency: 'Ajansınız', website: 'www.ajans.com' }
+  const storedSender = (() => {
+    if (typeof window === 'undefined') return null
+    try { return JSON.parse(localStorage.getItem('lb_sender') ?? 'null') } catch { return null }
+  })()
+  const demoSender = {
+    name:    storedSender?.name    || 'Siz',
+    agency:  storedSender?.agency  || 'Ajansınız',
+    website: storedSender?.website || 'www.ajans.com',
+  }
   const livePreview = applyTemplate(
     livePreviewShort ? shortTpl : longTpl,
     DEMO_LEAD as never,

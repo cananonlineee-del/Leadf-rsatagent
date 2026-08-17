@@ -6,6 +6,7 @@ export type CRMStatus = 'new' | 'contacted' | 'in_progress' | 'closed' | 'reject
 export interface CRMEntry {
   status: CRMStatus
   note: string
+  follow_up_date: string | null   // 'YYYY-MM-DD' veya null
 }
 
 export async function getCRMStatuses(placeIds: string[]): Promise<Record<string, CRMEntry>> {
@@ -13,12 +14,16 @@ export async function getCRMStatuses(placeIds: string[]): Promise<Record<string,
   const supabase = createClient()
   const { data } = await supabase
     .from('crm_leads')
-    .select('place_id, status, note')
+    .select('place_id, status, note, follow_up_date')
     .in('place_id', placeIds)
 
   const result: Record<string, CRMEntry> = {}
   for (const row of data ?? []) {
-    result[row.place_id] = { status: row.status as CRMStatus, note: row.note ?? '' }
+    result[row.place_id] = {
+      status: row.status as CRMStatus,
+      note: row.note ?? '',
+      follow_up_date: row.follow_up_date ?? null,
+    }
   }
   return result
 }
@@ -27,7 +32,8 @@ export async function upsertCRMStatus(
   placeId: string,
   lead: Lead,
   status: CRMStatus,
-  note?: string
+  note?: string,
+  follow_up_date?: string | null,
 ): Promise<void> {
   const supabase = createClient()
   await supabase.from('crm_leads').upsert({
@@ -35,6 +41,7 @@ export async function upsertCRMStatus(
     lead_data: lead,
     status,
     note: note ?? '',
+    follow_up_date: follow_up_date ?? null,
     updated_at: new Date().toISOString(),
   }, { onConflict: 'user_id,place_id' })
 }
@@ -52,6 +59,7 @@ export interface CRMRow {
   user_id: string
   status: CRMStatus
   note: string
+  follow_up_date: string | null
   updated_at: string
   lead_data: {
     name?: string
@@ -70,7 +78,7 @@ export async function listCRMLeads(): Promise<{ rows: CRMRow[]; myUserId: string
     supabase.auth.getUser(),
     supabase
       .from('crm_leads')
-      .select('place_id, user_id, status, note, updated_at, lead_data')
+      .select('place_id, user_id, status, note, follow_up_date, updated_at, lead_data')
       .not('status', 'eq', 'new')
       .order('updated_at', { ascending: false }),
   ])

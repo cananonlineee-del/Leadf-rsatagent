@@ -241,6 +241,21 @@ export default function TakipPage() {
                           <span className={`text-[10px] font-bold px-2 py-1 rounded-full ${CRM_STATUS_BADGE[row.status]}`}>
                             {CRM_STATUS_LABELS[row.status]}
                           </span>
+                          {row.follow_up_date && (() => {
+                            const today = new Date().toISOString().slice(0, 10)
+                            const overdue = row.follow_up_date < today
+                            const isToday = row.follow_up_date === today
+                            const fmt = new Intl.DateTimeFormat('tr-TR', { day: 'numeric', month: 'short' }).format(new Date(row.follow_up_date + 'T00:00:00'))
+                            return (
+                              <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${
+                                overdue ? 'text-red-400 border-red-500/30 bg-red-500/10' :
+                                isToday ? 'text-amber-400 border-amber-500/30 bg-amber-500/10' :
+                                'text-blue-400 border-blue-500/20 bg-blue-500/5'
+                              }`}>
+                                {overdue ? '⚠ Geçti' : isToday ? 'Bugün' : fmt}
+                              </span>
+                            )
+                          })()}
                           <p className="text-[10px] text-zinc-700">
                             {new Intl.DateTimeFormat('tr-TR', { day: 'numeric', month: 'short' }).format(new Date(row.updated_at))}
                           </p>

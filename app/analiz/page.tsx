@@ -304,15 +304,17 @@ function CityAutocomplete({
 
 // ─── LeadCard ─────────────────────────────────────────────────────────────────
 
-type DetailTab = 'google' | 'web' | 'sosyal' | 'platform' | 'firsat'
+type DetailTab = 'google' | 'web' | 'sosyal' | 'firsat'
 
 function LeadCard({
   lead,
   rank,
   crmStatus,
   crmNote,
+  crmFollowUp,
   onStatusChange,
   onNoteChange,
+  onFollowUpChange,
   onMonitor,
   isMonitored,
 }: {
@@ -320,8 +322,10 @@ function LeadCard({
   rank: number
   crmStatus: CRMStatus
   crmNote: string
+  crmFollowUp: string | null
   onStatusChange: (status: CRMStatus) => void
   onNoteChange: (note: string) => void
+  onFollowUpChange: (date: string | null) => void
   onMonitor: () => void
   isMonitored: boolean
 }) {
@@ -329,13 +333,15 @@ function LeadCard({
   const [activeTab, setActiveTab]     = useState<DetailTab>('google')
   const [showAllGaps, setShowAllGaps] = useState(false)
   const [statusOpen, setStatusOpen]   = useState(false)
-  const [localNote, setLocalNote]     = useState(crmNote)
-  const [pdfLoading, setPdfLoading]   = useState(false)
-  const [copiedKey, setCopiedKey]     = useState<string | null>(null)
+  const [localNote, setLocalNote]       = useState(crmNote)
+  const [localFollowUp, setLocalFollowUp] = useState(crmFollowUp ?? '')
+  const [pdfLoading, setPdfLoading]     = useState(false)
+  const [copiedKey, setCopiedKey]       = useState<string | null>(null)
   const noteTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const statusRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => { setLocalNote(crmNote) }, [crmNote])
+  useEffect(() => { setLocalFollowUp(crmFollowUp ?? '') }, [crmFollowUp])
 
   useEffect(() => {
     function handler(e: MouseEvent) {
@@ -427,7 +433,6 @@ function LeadCard({
     lead.photoCount < 5,
     !lead.hasOpeningHours,
     lead.lastReviewDate && Math.floor((Date.now() - new Date(lead.lastReviewDate).getTime()) / 86_400_000) > 90,
-    lead.negativeReviewRate !== null && lead.negativeReviewRate > 40,
     !lead.hasGoogleDescription,
     lead.businessStatus !== 'OPERATIONAL',
   ].filter(Boolean).length
@@ -448,16 +453,6 @@ function LeadCard({
     _tt2 && _tt2.activity !== 'active',
   ].filter(Boolean).length
 
-  const _plat2 = lead.platforms
-  const platformBadgeCount = _plat2 ? [
-    _plat2.yemeksepeti === false,
-    _plat2.getir === false,
-    _plat2.tripadvisor === false,
-    _plat2.marketplace === false,
-    _plat2.bookingPlatform === false,
-    !_plat2.inLocalPack,
-    !_plat2.youtubeHandle && !lead.youtubeHandle,
-  ].filter(Boolean).length : 0
 
   const igActivity: Record<InstagramData['activity'], { label: string; cls: string }> = {
     active:    { label: 'Aktif',         cls: 'text-emerald-400' },
@@ -488,11 +483,23 @@ function LeadCard({
           <div className="flex flex-col items-end gap-1.5 shrink-0">
             <div
               className={`rounded-xl px-3 py-2 text-center cursor-default ${need.badgeCls}`}
-              title={`Fırsat Skoru: ${lead.score}/100\nÖdeme Gücü: ${lead.odemeGucu} · Açık Şiddeti: ${lead.acikSiddeti}\nFormül: √(Ödeme Gücü × Açık Şiddeti)`}
+              title={`${lead.score >= 70 ? 'Öncelikli lead — önce ara' : lead.score >= 40 ? 'Orta öncelik — sırayla değerlendir' : 'Düşük öncelik — sonraya bırak'}\n\nÖdeme Gücü: ${lead.odemeGucu}/100\nİşletmenin bütçe ve kurumsal olgunluğu\n(yorum sayısı · puan · fiyat seviyesi · domain yaşı)\n\nAçık Şiddeti: ${lead.acikSiddeti}/100\nDigital eksiklerin büyüklüğü\n(web · sosyal medya · reklam altyapısı)`}
             >
               <div className="text-[9px] font-bold uppercase tracking-wider opacity-60">Fırsat Skoru</div>
               <div className="text-sm font-black leading-tight mt-0.5">{lead.score}<span className="text-[9px] font-semibold opacity-50">/100</span></div>
             </div>
+
+            {/* Takip tarihi rozeti (sadece set edilmişse) */}
+            {crmFollowUp && (() => {
+              const today = new Date().toISOString().slice(0, 10)
+              const overdue = crmFollowUp < today
+              const fmt = new Intl.DateTimeFormat('tr-TR', { day: 'numeric', month: 'short' }).format(new Date(crmFollowUp + 'T00:00:00'))
+              return (
+                <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${overdue ? 'text-red-400 border-red-500/30 bg-red-500/10' : 'text-blue-400 border-blue-500/30 bg-blue-500/10'}`}>
+                  {overdue ? '⚠ ' : ''}{fmt}
+                </span>
+              )
+            })()}
 
             {/* CRM durum rozeti + dropdown */}
             <div ref={statusRef} className="relative">
@@ -535,14 +542,26 @@ function LeadCard({
           <p className="text-sm text-blue-200 leading-relaxed">{lead.pitch}</p>
         </div>
 
-        {/* Not alanı */}
-        <div className="mt-3">
+        {/* Not + Takip tarihi */}
+        <div className="mt-3 flex gap-2">
           <input
             type="text"
             value={localNote}
             onChange={e => handleNoteChange(e.target.value)}
             placeholder="Not ekle… (otomatik kaydedilir)"
-            className="w-full bg-white/[0.04] border border-white/[0.08] text-zinc-300 rounded-xl px-3 py-2 text-xs placeholder-zinc-700 focus:outline-none focus:ring-1 focus:ring-blue-500/30 transition"
+            className="flex-1 min-w-0 bg-white/[0.04] border border-white/[0.08] text-zinc-300 rounded-xl px-3 py-2 text-xs placeholder-zinc-700 focus:outline-none focus:ring-1 focus:ring-blue-500/30 transition"
+          />
+          <input
+            type="date"
+            value={localFollowUp}
+            min={new Date().toISOString().slice(0, 10)}
+            onChange={e => {
+              const val = e.target.value || null
+              setLocalFollowUp(val ?? '')
+              onFollowUpChange(val)
+            }}
+            title="Takip tarihi"
+            className="bg-white/[0.04] border border-white/[0.08] text-zinc-400 rounded-xl px-2 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500/30 transition cursor-pointer w-[130px] shrink-0"
           />
         </div>
       </div>
@@ -691,7 +710,6 @@ function LeadCard({
               { id: 'google',   label: 'Google',   count: googleBadgeCount },
               { id: 'web',      label: 'Web',       count: webBadgeCount },
               { id: 'sosyal',   label: 'Sosyal',    count: socialBadgeCount },
-              ...(lead.platforms ? [{ id: 'platform', label: 'Platform', count: platformBadgeCount }] : []),
               { id: 'firsat',   label: 'Fırsat',    count: 0 },
             ] as { id: DetailTab; label: string; count: number }[]).map(tab => (
               <button
@@ -722,7 +740,7 @@ function LeadCard({
             const s = lead.siteAnalysis
             const siteProblems: React.ReactNode[] = []
             if (!lead.website) {
-              siteProblems.push(<Row key="no-site" label="Web Sitesi"><span className="text-xs text-red-400 font-medium">✕ Tespit edilemedi</span></Row>)
+              siteProblems.push(<Row key="no-site" label="Web Sitesi"><span className="text-xs text-red-400 font-medium">✕ Web sitesi yok</span></Row>)
             }
             if (s) {
               if (!s.ssl) siteProblems.push(<Row key="ssl" label="SSL"><span className="text-xs font-medium text-red-400">✕ Güvensiz (HTTP)</span></Row>)
@@ -736,7 +754,7 @@ function LeadCard({
                 siteProblems.push(<Row key="ga" label="Google Ads Kodu"><span className="text-xs font-medium text-amber-400">✕ Yok</span></Row>)
               if (!s.hasSocialLinks) siteProblems.push(<Row key="soc" label="Sosyal Linkler"><span className="text-xs font-medium text-red-400">✕ Yok</span></Row>)
               if (s.pageTitle === null || s.pageTitle.length < 20)
-                siteProblems.push(<Row key="title" label="Sayfa Başlığı"><span className={`text-xs font-semibold ${s.pageTitle === null ? 'text-zinc-600' : 'text-red-400'}`}>{s.pageTitle === null ? 'Tespit edilemedi' : `${s.pageTitle.slice(0,40)}${s.pageTitle.length > 40 ? '…' : ''} (${s.pageTitle.length} kr)`}</span></Row>)
+                siteProblems.push(<Row key="title" label="Sayfa Başlığı"><span className={`text-xs font-semibold ${s.pageTitle === null ? 'text-red-400' : 'text-red-400'}`}>{s.pageTitle === null ? '✕ Başlık yok' : `${s.pageTitle.slice(0,40)}${s.pageTitle.length > 40 ? '…' : ''} (${s.pageTitle.length} kr)`}</span></Row>)
               if (!s.hasMetaDesc) siteProblems.push(<Row key="meta" label="Meta Açıklama"><span className="text-xs font-medium text-red-400">✕ Yok</span></Row>)
               if (!s.pageHasPhone) siteProblems.push(<Row key="tel" label="Tel (Sayfada)"><span className="text-xs font-medium text-red-400">✕ Yok</span></Row>)
               if (!s.hasWhatsApp) siteProblems.push(<Row key="wa" label="WhatsApp"><span className="text-xs font-medium text-red-400">✕ Butonu Yok</span></Row>)
@@ -746,8 +764,6 @@ function LeadCard({
               if (!s.hasLocalBusinessSchema) siteProblems.push(<Row key="sc" label="Schema"><span className="text-xs font-medium text-red-400">✕ Yok</span></Row>)
               if (!s.hasOnlinePayment && lead.categoryProfile.website >= 3)
                 siteProblems.push(<Row key="pay" label="Online Ödeme"><span className="text-xs font-medium text-red-400">✕ Yok</span></Row>)
-              if (!s.hasLiveChat) siteProblems.push(<Row key="lc" label="Canlı Chat"><span className="text-xs font-medium text-amber-400">✕ Yok</span></Row>)
-              if (!s.hasNewsletter) siteProblems.push(<Row key="nl" label="Bülten Formu"><span className="text-xs font-medium text-amber-400">✕ Yok</span></Row>)
               if (!s.hasGTM && (s.hasPixel || s.hasGoogleAds || s.hasAnalytics))
                 siteProblems.push(<Row key="gtm" label="GTM"><span className="text-xs font-medium text-amber-400">✕ Yok</span></Row>)
               if (s.hasContactForm && !s.contactFormHasPhone)
@@ -767,7 +783,7 @@ function LeadCard({
                 ) : lead.siteAnalysis ? (
                   <p className="text-xs text-emerald-400 font-medium">✓ Tespit edilen sorun yok</p>
                 ) : (
-                  <p className="text-xs text-zinc-600">Site analizi yapılamadı</p>
+                  <p className="text-xs text-zinc-500">Site içeriği okunamadı — erişim engeli veya yönlendirme (JS sitesi) olabilir.</p>
                 )}
                 {lead.websiteSource === 'discovered' && (
                   <p className="text-[11px] text-amber-400 bg-amber-500/10 rounded px-2 py-1.5 mt-2 leading-relaxed">
@@ -792,8 +808,6 @@ function LeadCard({
               gProblems.push(<Row key="hrs" label="Çalışma Saatleri"><span className="text-xs font-medium text-red-400">✕ Girilmemiş</span></Row>)
             if (lead.lastReviewDate && Math.floor((Date.now() - new Date(lead.lastReviewDate).getTime()) / 86_400_000) > 90)
               gProblems.push(<Row key="rev" label="Son Yorum"><span className="text-xs font-semibold text-red-400">{formatDate(lead.lastReviewDate)}</span></Row>)
-            if (lead.negativeReviewRate !== null && lead.negativeReviewRate > 40)
-              gProblems.push(<Row key="neg" label="Olumsuz Yorum"><span className={`text-xs font-semibold ${lead.negativeReviewRate > 60 ? 'text-red-400' : 'text-amber-400'}`}>%{lead.negativeReviewRate} <span className="text-zinc-600 font-normal">(örn.)</span></span></Row>)
             if (!lead.hasGoogleDescription)
               gProblems.push(<Row key="desc" label="G. Açıklama"><span className="text-xs font-medium text-red-400">✕ Yok</span></Row>)
             if (lead.businessStatus !== 'OPERATIONAL')
@@ -857,7 +871,7 @@ function LeadCard({
                       </span>
                     </Row>
                   ) : (
-                    <Row label="Instagram"><span className="text-xs text-red-400 font-medium">✕ Tespit edilemedi</span></Row>
+                    <Row label="Instagram"><span className="text-xs text-zinc-600">Hesap bulunamadı</span></Row>
                   )}
                   {igProblems}
                   {fb ? (
@@ -869,7 +883,7 @@ function LeadCard({
                       </span>
                     </Row>
                   ) : (
-                    <Row label="Facebook"><span className="text-xs text-red-400 font-medium">✕ Tespit edilemedi</span></Row>
+                    <Row label="Facebook"><span className="text-xs text-zinc-600">Hesap bulunamadı</span></Row>
                   )}
                   {fbProblems}
                   {tt ? (
@@ -881,7 +895,7 @@ function LeadCard({
                       </span>
                     </Row>
                   ) : (
-                    <Row label="TikTok"><span className="text-xs text-zinc-600">Tespit edilemedi</span></Row>
+                    <Row label="TikTok"><span className="text-xs text-zinc-600">Hesap bulunamadı</span></Row>
                   )}
                   {ttProblems}
                   {lead.metaAds && (
@@ -898,41 +912,6 @@ function LeadCard({
                 </dl>
                 {ig?.confidence === 'possible' && (
                   <p className="text-[11px] text-amber-400 bg-amber-500/10 rounded px-2 py-1.5 mt-2 leading-relaxed">{ig.confidenceReason}</p>
-                )}
-              </section>
-            )
-          })()}
-
-          {/* Platformlar */}
-          {activeTab === 'platform' && lead.platforms && (() => {
-            const plat = lead.platforms
-            const platProblems: React.ReactNode[] = []
-            if (plat.yemeksepeti === false) platProblems.push(<Row key="ys" label="Yemeksepeti"><span className="text-xs font-medium text-red-400">✕ Listelenmemiş</span></Row>)
-            if (plat.getir === false) platProblems.push(<Row key="gt" label="Getir / TY Yemek"><span className="text-xs font-medium text-red-400">✕ Listelenmemiş</span></Row>)
-            if (plat.tripadvisor === false) platProblems.push(<Row key="ta" label="Tripadvisor"><span className="text-xs font-medium text-red-400">✕ Yok</span></Row>)
-            if (plat.marketplace === false) platProblems.push(<Row key="mp" label="Marketplace"><span className="text-xs font-medium text-red-400">✕ Yok</span></Row>)
-            if (plat.bookingPlatform === false) platProblems.push(<Row key="bp" label="Online Randevu"><span className="text-xs font-medium text-red-400">✕ Listelenmemiş</span></Row>)
-            if (!plat.inLocalPack) platProblems.push(<Row key="lp" label="Google 3-Paketi"><span className="text-xs font-medium text-red-400">✕ Görünmüyor</span></Row>)
-            if (!plat.youtubeHandle && !lead.youtubeHandle) platProblems.push(<Row key="yt" label="YouTube"><span className="text-xs font-medium text-amber-400">✕ Tespit edilemedi</span></Row>)
-            return (
-              <section className="px-5 py-4">
-                <h4 className="text-[10px] font-bold text-zinc-600 uppercase tracking-widest mb-3 flex items-center gap-2">
-                  Platformlar
-                  {platProblems.length > 0 && <span className="text-red-400">({platProblems.length} sorun)</span>}
-                </h4>
-                {platProblems.length > 0 ? (
-                  <dl className="space-y-2">
-                    {platProblems}
-                    {(plat.youtubeHandle ?? lead.youtubeHandle) && (
-                      <Row label="YouTube">
-                        <a href={(plat.youtubeHandle ?? lead.youtubeHandle)!} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-400 font-semibold hover:underline truncate max-w-[200px] block">
-                          {(plat.youtubeHandle ?? lead.youtubeHandle)!.replace(/https?:\/\/(www\.)?youtube\.com\//, 'yt/')}
-                        </a>
-                      </Row>
-                    )}
-                  </dl>
-                ) : (
-                  <p className="text-xs text-emerald-400 font-medium">✓ Tüm platformlar tespit edildi</p>
                 )}
               </section>
             )
@@ -1183,18 +1162,19 @@ export default function AnalizPage() {
   }
 
   // Sonuçlar
-  const [leads, setLeads]       = useState<Lead[]>([])
-  const [loading, setLoading]   = useState(false)
+  const [leads, setLeads]         = useState<Lead[]>([])
+  const [loading, setLoading]     = useState(false)
   const [loadingStep, setLoadingStep] = useState(0)
-  const [error, setError]       = useState<string | null>(null)
-  const [searched, setSearched] = useState(false)
+  const [loadedCount, setLoadedCount] = useState(0)
+  const [error, setError]         = useState<string | null>(null)
+  const [searched, setSearched]   = useState(false)
 
   // Filtre
   const [filter, setFilter] = useState<'all' | 'high' | 'mid' | 'low' | CRMStatus>('all')
 
 
   // CRM
-  const [crmMap, setCrmMap] = useState<Record<string, { status: CRMStatus; note: string }>>({})
+  const [crmMap, setCrmMap] = useState<Record<string, { status: CRMStatus; note: string; follow_up_date: string | null }>>({})
 
   // Monitored
   const [monitoredIds, setMonitoredIds] = useState<Set<string>>(new Set())
@@ -1238,9 +1218,9 @@ export default function AnalizPage() {
     const placeIds = leads.map(l => l.placeId).filter(Boolean) as string[]
     if (placeIds.length === 0) return
     getCRMStatuses(placeIds).then(data => {
-      const map: Record<string, { status: CRMStatus; note: string }> = {}
+      const map: Record<string, { status: CRMStatus; note: string; follow_up_date: string | null }> = {}
       for (const id of placeIds) {
-        map[id] = data[id] ?? { status: 'new', note: '' }
+        map[id] = data[id] ?? { status: 'new', note: '', follow_up_date: null }
       }
       setCrmMap(map)
     })
@@ -1251,6 +1231,52 @@ export default function AnalizPage() {
     setSelectedIlce(ilce)
   }
 
+  // ── NDJSON stream okuyucu — her lead satırı gelince state'e ekler ──
+  async function readLeadStream(
+    url: string,
+    seen: Set<string>,
+  ): Promise<void> {
+    let res: Response
+    try {
+      res = await fetch(url)
+    } catch {
+      setError('Sunucuya bağlanılamadı. Lütfen tekrar deneyin.')
+      return
+    }
+    if (!res.ok) {
+      try { const d = await res.json(); setError(d.error ?? 'Beklenmeyen bir hata oluştu.') }
+      catch { setError('Beklenmeyen bir hata oluştu.') }
+      return
+    }
+    const reader = res.body!.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() ?? ''
+      for (const line of lines) {
+        if (!line.trim()) continue
+        try {
+          const msg = JSON.parse(line) as { type: string; data?: Lead; message?: string }
+          if (msg.type === 'lead' && msg.data) {
+            const key = msg.data.placeId ?? msg.data.name
+            if (!seen.has(key)) {
+              seen.add(key)
+              setLeads(prev => [...prev, msg.data!].sort((a, b) => b.score - a.score))
+              setLoadedCount(prev => prev + 1)
+              setSearched(true)
+            }
+          } else if (msg.type === 'error') {
+            setError(msg.message ?? 'Analiz başarısız')
+          }
+        } catch { /* bozuk satır, atla */ }
+      }
+    }
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (loading) return
@@ -1258,46 +1284,31 @@ export default function AnalizPage() {
     setError(null)
     setLeads([])
     setSearched(false)
+    setLoadedCount(0)
     setFilter('all')
     setCrmMap({})
 
+    const seen = new Set<string>()
     try {
       if (searchMode === 'single') {
         const url = `/api/analyze?businessName=${encodeURIComponent(businessQuery.trim())}&sector=${encodeURIComponent(sector.trim())}${selectedIl ? '&city=' + encodeURIComponent(selectedIl) : ''}`
-        const res  = await fetch(url)
-        const data = await res.json()
-        if (!res.ok) setError(data.error ?? 'Beklenmeyen bir hata oluştu.')
-        else { setLeads(data.leads); setSearched(true) }
+        await readLeadStream(url, seen)
       } else {
-        // Birincil ilçe + ek ilçeler
         const allCities = [
           { il: selectedIl, ilce: selectedIlce },
           ...extraCities,
         ]
-        const responses = await Promise.all(
+        await Promise.all(
           allCities.map(({ il, ilce }) =>
-            fetch(`/api/analyze?sector=${encodeURIComponent(sector.trim())}&city=${encodeURIComponent(`${ilce} ${il}`)}`)
-              .then(r => r.json() as Promise<{ leads?: Lead[]; error?: string }>)
-              .catch(() => ({ leads: [] as Lead[], error: undefined as string | undefined }))
+            readLeadStream(
+              `/api/analyze?sector=${encodeURIComponent(sector.trim())}&city=${encodeURIComponent(`${ilce} ${il}`)}`,
+              seen,
+            )
           )
         )
-        const firstError = responses.find(r => r.error)
-        if (firstError?.error) { setError(firstError.error); return }
-        // Merge + deduplicate by placeId; sort by score
-        const seen = new Set<string>()
-        const merged: Lead[] = []
-        for (const r of responses) {
-          for (const lead of r.leads ?? []) {
-            const key = lead.placeId ?? lead.name
-            if (!seen.has(key)) { seen.add(key); merged.push(lead) }
-          }
-        }
-        merged.sort((a, b) => b.score - a.score)
-        setLeads(merged)
-        setSearched(true)
       }
     } catch {
-      setError('Sunucuya bağlanılamadı. Lütfen tekrar deneyin.')
+      setError('Beklenmeyen bir hata oluştu.')
     } finally {
       setLoading(false)
     }
@@ -1313,14 +1324,20 @@ export default function AnalizPage() {
   // ── CRM handlers ──
   const handleStatusChange = useCallback(async (lead: Lead, status: CRMStatus) => {
     if (!lead.placeId) return
-    setCrmMap(m => ({ ...m, [lead.placeId!]: { ...m[lead.placeId!] ?? { note: '' }, status } }))
-    await upsertCRMStatus(lead.placeId, lead, status, crmMap[lead.placeId]?.note)
+    setCrmMap(m => ({ ...m, [lead.placeId!]: { ...m[lead.placeId!] ?? { note: '', follow_up_date: null }, status } }))
+    await upsertCRMStatus(lead.placeId, lead, status, crmMap[lead.placeId]?.note, crmMap[lead.placeId]?.follow_up_date)
   }, [crmMap])
 
   const handleNoteChange = useCallback(async (lead: Lead, note: string) => {
     if (!lead.placeId) return
-    setCrmMap(m => ({ ...m, [lead.placeId!]: { ...m[lead.placeId!] ?? { status: 'new' }, note } }))
-    await upsertCRMStatus(lead.placeId, lead, crmMap[lead.placeId]?.status ?? 'new', note)
+    setCrmMap(m => ({ ...m, [lead.placeId!]: { ...m[lead.placeId!] ?? { status: 'new', follow_up_date: null }, note } }))
+    await upsertCRMStatus(lead.placeId, lead, crmMap[lead.placeId]?.status ?? 'new', note, crmMap[lead.placeId]?.follow_up_date)
+  }, [crmMap])
+
+  const handleFollowUpChange = useCallback(async (lead: Lead, follow_up_date: string | null) => {
+    if (!lead.placeId) return
+    setCrmMap(m => ({ ...m, [lead.placeId!]: { ...m[lead.placeId!] ?? { status: 'new', note: '' }, follow_up_date } }))
+    await upsertCRMStatus(lead.placeId, lead, crmMap[lead.placeId]?.status ?? 'new', crmMap[lead.placeId]?.note, follow_up_date)
   }, [crmMap])
 
   // ── Monitor handler ──
@@ -1427,7 +1444,7 @@ export default function AnalizPage() {
             Lead Fırsat Ajanı
           </h1>
           <p className="text-zinc-500 text-sm mt-2 max-w-sm mx-auto">
-            Sektör ve ilçe gir — 58 sinyal ile derin fırsat raporu oluştur.
+            Sektör ve ilçe gir — derin fırsat raporu oluştur.
           </p>
         </div>
 
@@ -1599,8 +1616,8 @@ export default function AnalizPage() {
           </button>
         </form>
 
-        {/* Yükleniyor */}
-        {loading && (
+        {/* İlk lead gelmeden tam ekran loader */}
+        {loading && !searched && (
           <>
             <ProgressLoader step={loadingStep} />
             <div className="space-y-4 mt-2 opacity-60">
@@ -1609,6 +1626,14 @@ export default function AnalizPage() {
               <SkeletonCard />
             </div>
           </>
+        )}
+
+        {/* Lead'ler gelirken kartların üstünde ince ilerleme çubuğu */}
+        {loading && searched && (
+          <div className="flex items-center gap-2.5 py-2 px-1 text-xs text-zinc-500">
+            <span className="w-3 h-3 border-2 border-zinc-700 border-t-zinc-400 rounded-full animate-spin shrink-0" />
+            <span>{loadedCount} işletme analiz edildi, devam ediyor…</span>
+          </div>
         )}
 
         {/* Hata */}
@@ -1717,6 +1742,22 @@ export default function AnalizPage() {
               </div>
             </div>
 
+            {/* Skor kılavuzu */}
+            <div className="grid grid-cols-3 gap-2 mb-4">
+              <div className="bg-red-500/[0.06] border border-red-500/20 rounded-xl px-3 py-2">
+                <p className="text-[10px] font-bold text-red-400">70+ Yüksek</p>
+                <p className="text-[10px] text-zinc-500 mt-0.5 leading-tight">Bütçesi var, dijital açığı büyük — önce bunları ara</p>
+              </div>
+              <div className="bg-amber-500/[0.06] border border-amber-500/20 rounded-xl px-3 py-2">
+                <p className="text-[10px] font-bold text-amber-400">40–70 Orta</p>
+                <p className="text-[10px] text-zinc-500 mt-0.5 leading-tight">Dengeli fırsat — sektör profiline göre değerlendir</p>
+              </div>
+              <div className="bg-white/[0.03] border border-white/[0.09] rounded-xl px-3 py-2">
+                <p className="text-[10px] font-bold text-zinc-400">40↓ Düşük</p>
+                <p className="text-[10px] text-zinc-500 mt-0.5 leading-tight">Bütçe sınırlı veya altyapısı zaten iyi</p>
+              </div>
+            </div>
+
             {filteredLeads.length === 0 && (
               <div className="rounded-xl border border-white/[0.07] bg-white/[0.02] px-5 py-6 text-center mb-4">
                 <p className="text-zinc-500 text-sm">Bu kategoride işletme yok.</p>
@@ -1734,8 +1775,10 @@ export default function AnalizPage() {
                     rank={leads.indexOf(lead) + 1}
                     crmStatus={crm.status}
                     crmNote={crm.note}
+                    crmFollowUp={crm.follow_up_date}
                     onStatusChange={status => handleStatusChange(lead, status)}
                     onNoteChange={note => handleNoteChange(lead, note)}
+                    onFollowUpChange={date => handleFollowUpChange(lead, date)}
                     onMonitor={() => handleMonitor(lead)}
                     isMonitored={!!lead.placeId && monitoredIds.has(lead.placeId)}
                   />

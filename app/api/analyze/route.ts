@@ -1846,8 +1846,8 @@ function computeGap(
 
   // ── Yorum kalitesi ──
   if (lastReviewDate && daysSinceStr(lastReviewDate) > 90) s += Math.round(8 * wReview)
-  // negativeReviewRate skorlamadan çıkarıldı: Google Places max 5 yorum döndürür,
-  // bu örneklem istatistiksel anlamsız ve skoru yanıltır. UI'da gösterim korunuyor.
+  // negativeReviewRate skorlamadan ve UI'dan çıkarıldı: Google Places max 5 yorum döndürür,
+  // bu örneklem istatistiksel anlamsız ve skoru yanıltır. Gap mesajı %50+ eşiğiyle korunuyor.
 
   // ── Google Business açıklaması ──
   if (!hasGoogleDescription) s += Math.round(3 * wSeo)
@@ -1867,24 +1867,10 @@ function computeGap(
   // ── Dönüşüm altyapısı (site varsa) ──
   if (site) {
     if (!site.hasOnlinePayment && profile.website >= 3) s += Math.round(6 * wSite)
-    if (!site.hasLiveChat) s += Math.round(4 * wAds)
     if (!site.hasGTM && (site.hasPixel || site.hasGoogleAds || site.hasAnalytics)) s += Math.round(3 * wAds)
-    if (!site.hasNewsletter) s += Math.round(3 * wAds)
   }
-
-  // ── Platformlar (null = bu sektörde ilgisiz, false = ilgili ama eksik) ──
-  // 0.6 çarpanı: Google arama tabanlı tespit (~%60 güvenilirlik), direkt platform API'si değil
-  const PLATFORM_CONF = 0.6
-  const wPlatform = (profile.googleReview + profile.ads) / 2 / 5
-  if (platforms && platforms.yemeksepeti === false && platforms.getir === false)
-    s += Math.round(8 * wPlatform * PLATFORM_CONF)
-  if (platforms && platforms.tripadvisor === false)
-    s += Math.round(5 * wPlatform * PLATFORM_CONF)
-  if (platforms && platforms.marketplace === false && profile.ads >= 3)
-    s += Math.round(5 * wPlatform * PLATFORM_CONF)
-  if (platforms && platforms.bookingPlatform === false)
-    s += Math.round(7 * wPlatform * PLATFORM_CONF)
-  if (platforms && !platforms.inLocalPack) s += Math.round(6 * wSeo * PLATFORM_CONF)
+  // Not: hasLiveChat (~%65) ve hasNewsletter (~%60) JS-render bağımlı — güven eşiği altında, kaldırıldı.
+  // Not: Platform varlığı (Yemeksepeti, Getir vb.) Google arama tabanlı (~%60) — güven eşiği altında, kaldırıldı.
 
   return Math.min(s, 100)
 }
@@ -2060,28 +2046,9 @@ function detectGaps(
   // ── Dönüşüm altyapısı ──
   if (site && !site.hasOnlinePayment && profile.website >= 3)
     add('Web sitesinde online ödeme sistemi yok — ziyaretçiler anlık sipariş/ödeme yapamıyor', profile.website * 2)
-  if (site && !site.hasLiveChat)
-    add('Sitede canlı destek yok — potansiyel müşteri soruları yanıtsız kalıyor', profile.ads * 2)
-  if (site && !site.hasNewsletter)
-    add('E-posta listesi toplama sistemi yok — müşteri tabanı oluşturma fırsatı kaçırılıyor', profile.ads)
   if (site && !site.hasGTM && (site.hasPixel || site.hasGoogleAds || site.hasAnalytics))
     add('Google Tag Manager kullanılmıyor — tüm izleme kodları HTML\'e gömülü, yönetimi zor ve hata riski yüksek', profile.ads * 2)
-
-  // ── Platformlar (null = bu sektörde ilgisiz) ──
-  if (platforms) {
-    if (platforms.yemeksepeti === false && platforms.getir === false)
-      add('Yemeksepeti veya Getir\'de listelenmiyor — online sipariş kanalı eksik', profile.googleReview * 2)
-    if (platforms.tripadvisor === false)
-      add('Tripadvisor veya Booking.com\'da sayfa yok — uluslararası ve yurt içi turist/ziyaretçi trafiği kaçırılıyor', profile.website * 2)
-    if (platforms.marketplace === false && profile.ads >= 3)
-      add('Sahibinden, Hepsiburada veya Trendyol\'da mağaza tespit edilmedi — e-ticaret satış kanalı eksik', profile.ads * 2)
-    if (platforms.bookingPlatform === false)
-      add('Online randevu platformunda (Doktortakvimi, Treatwell, Fresha, Calendly vb.) listelenmiyor — dijital randevu kanalı eksik', profile.website * 2)
-    if (!platforms.inLocalPack)
-      add('Google yerel 3-paketinde (harita sonuçları) görünmüyor — en değerli yerel arama trafiği kaçırılıyor', profile.seo * 3)
-    if (!platforms.youtubeHandle)
-      add('YouTube kanalı tespit edilemedi — video içerik pazarlama fırsatı kullanılmıyor', profile.instagram)
-  }
+  // Not: hasLiveChat, hasNewsletter ve platform sinyalleri güven eşiği (%70) altında kaldırıldı.
 
   // ── Meta Ads yaşı ──
   if (metaAdsAge !== null && metaAds?.hasHistoricalAds)
@@ -2106,78 +2073,71 @@ function generatePitch(
   profile: CategoryProfile,
   hasOpeningHours: boolean,
 ): string {
-  const isHighValue =
-    priceLevel === 'PRICE_LEVEL_EXPENSIVE' || priceLevel === 'PRICE_LEVEL_VERY_EXPENSIVE'
+  const isHighValue   = priceLevel === 'PRICE_LEVEL_EXPENSIVE' || priceLevel === 'PRICE_LEVEL_VERY_EXPENSIVE'
+  // Sektör tipi profil ağırlıklarından çıkarılır
+  const isSocialFirst = profile.instagram >= 4 && profile.website <= 2   // restoran, kafe, güzellik
+  const isTrustFirst  = profile.website >= 4 && profile.seo >= 4          // sağlık, konaklama, profesyonel
+  const isReviewFirst = profile.googleReview >= 5                          // sağlık, yeme-içme, hizmet, eğitim
 
-  // Sektörün en kritik kanalını belirle (öncelik sırası için)
-  const igIsTop     = profile.instagram    >= profile.website && profile.instagram    >= profile.googleReview
-  const reviewIsTop = profile.googleReview >= profile.website && profile.googleReview >= profile.instagram
+  const igFollowers = instagram?.followersCount
+  const igDays      = instagram?.lastPostDate ? daysSinceStr(instagram.lastPostDate) : null
 
-  // ── Site yoksa: sektöre göre farklı mesaj ──
+  // ── Web sitesi hiç yok ──
   if (websiteSource === 'none') {
-    if (profile.website >= 4) {
-      // Web sitesi bu sektörde kritik (sağlık, konaklama, profesyonel, eğitim)
-      if (reviewCount >= 100)
-        return `${reviewCount}+ yorumla köklü bir işletme, ancak web sitesi tespit edilemedi — müşteri/hasta güveni için bu kritik eksik. ${isHighValue ? 'Premium segmentte yüksek değerli fırsat.' : 'Acil müdahale gerektiriyor.'}`
-      return 'Bu sektörde web sitesi, müşteri güveni ve randevu/iletişim için temel altyapı — site + Google optimizasyonu paketi için güçlü adaydır.'
-    }
-    // Web sitesi bu sektörde az önemli (güzellik, yeme-içme) — önemli kanala yönelt
-    if (igIsTop && instagram?.activity === 'neglected') {
-      const days = instagram.lastPostDate ? daysSinceStr(instagram.lastPostDate) : 90
-      return `${reviewCount > 0 ? `${reviewCount} yorumlu` : 'Oturmuş'} işletme ama Instagram ${days}+ gündür hareketsiz — bu sektörde sosyal medya yönetimi en kritik büyüme aracı.`
-    }
-    if (reviewIsTop && reviewCount < 20)
-      return 'Google yorumları ve profil görünürlüğü bu sektörde müşteri kazanımının temeli — dijital yönetim paketi için ideal adaydır.'
-    return 'Web varlığı tespit edilemedi. Temel dijital paket ile hızlı ve ölçülebilir ROI sağlanabilir.'
+    if (isTrustFirst)
+      return `Potansiyel müşteriler sizi Google'da araştırıyor — web sitesi olmadan güven inşa edilemiyor ve rakipler arama sonuçlarında sizi geçiyor.${isHighValue ? ' Premium segmentte dijital imaj doğrudan tercih kararını etkiliyor.' : ''}`
+    if (isSocialFirst && instagram?.activity === 'neglected' && igDays)
+      return `${reviewCount > 10 ? reviewCount + ' yorumlu' : 'Oturmuş'} bir işletme, ama Instagram ${igDays}+ gündür sessiz — bu sektörde aktif rakipler her gün yeni müşteri çekiyor.`
+    if (isReviewFirst && reviewCount < 20)
+      return `Sadece ${reviewCount} Google yorumu var — bu sektörde müşteriler karar vermeden önce yorumlara bakıyor; az yorum rakibe yönlendiriyor.`
+    return 'Web varlığı tespit edilemedi. Rakipleriniz online müşteri kazanırken siz görünmüyorsunuz — temel dijital paket yüksek ROI sağlar.'
   }
 
   // ── Site var ama Google profiline eklenmemiş ──
-  if (websiteSource === 'discovered') {
-    if (profile.website >= 4)
-      return 'Web sitesi mevcut ancak Google profiline eklenmemiş — yerel arama trafiğini kaçırıyor. Profil güncelleme + SEO paketiyle görünürlük hızla artırılabilir.'
-    // Website bu sektörde az önemli — daha kritik eksiğe bak
-  }
+  if (websiteSource === 'discovered' && isTrustFirst)
+    return 'Web sitesi var ama Google profiline bağlı değil — yerel aramada görünmüyor, rakipler bu trafiği alıyor. Profil güncelleme + SEO ile hızla telafi edilir.'
 
-  // ── Site teknik sorunları (sadece website ağırlığı yüksekse öne çıkar) ──
-  if (site && !site.ssl && profile.website >= 3)
-    return 'Web sitesi HTTP — tarayıcılar güvensiz olarak işaretliyor. SSL + site yenileme paketi acil ihtiyaç.'
+  // ── Mobil hız: her açma girişimi potansiyel müşteri kaybı ──
   if (site && site.mobileScore !== null && site.mobileScore < 50 && profile.website >= 3)
-    return `Mobil performans kritik (${site.mobileScore}/100). Ziyaretçiler siteyi terk ediyor; teknik SEO + hızlandırma paketi yüksek dönüşüm getirir.`
+    return `Mobilde siteyi açan ziyaretçilerin büyük çoğunluğu sayfayı terk ediyor (mobil skor: ${site.mobileScore}/100) — her gün müşteri kaybediyorsunuz.`
 
-  // ── Instagram (bu sektörde yüksek öncelikli) ──
+  // ── Instagram bu sektörde birincil kanal ──
   if (profile.instagram >= 4) {
-    if (instagram?.activity === 'neglected') {
-      const days = instagram.lastPostDate ? daysSinceStr(instagram.lastPostDate) : 90
-      return `Instagram hesabı var ama ${days}+ gündür hareketsiz — bu sektörde sosyal medya yönetimi doğrudan müşteri kazanımı sağlar, yüksek ROI'lı fırsat.`
-    }
+    if (instagram?.activity === 'neglected' && igDays)
+      return `Instagram'da ${igFollowers ? igFollowers.toLocaleString('tr-TR') + ' takipçi' : 'bir kitle'} var ama ${igDays}+ gündür paylaşım yok — bu sektörde aktif rakipler o kitleye ulaşıyor.`
     if (instagram?.activity === 'dormant')
-      return 'Instagram hesabı aktif değil; bu sektörde düzenli görsel içerik + reklam stratejisiyle dönüşüm hızla artırılabilir.'
+      return 'Instagram hesabı pasif kalmış — bu sektörde düzenli içerik + hedefli reklam doğrudan müşteri kazanımına dönüşüyor.'
     if (!instagram)
-      return 'Instagram hesabı tespit edilemedi — bu sektörde sosyal medya varlığı müşteri kazanımında kritik rol oynar.'
+      return 'Instagram hesabı tespit edilemedi — bu sektörde yeni müşterilerin büyük bölümü rakipleri Instagram üzerinden buluyor.'
   }
 
-  // ── Genel pitch mantığı ──
-  if (profile.googleReview >= 4 && reviewCount < 20)
-    return 'Düşük yorum sayısı bu sektörde müşteri güvenini doğrudan etkiliyor. Google profil optimizasyonu + yorum kampanyasıyla hızlı etki yaratılabilir.'
-
+  // ── Reklam geçmişi var ama durmuş ──
   if (metaAds?.hasHistoricalAds && !metaAds.hasActiveAds)
-    return `Geçmişte ${metaAds.totalAdCount} Meta reklamı vermiş — reklama alışkın ama şu an aktif değil. Yeniden aktivasyon + optimizasyon paketiyle dönüşüm hemen başlatılabilir.`
+    return `Geçmişte ${metaAds.totalAdCount}+ Meta reklamı verilmiş ama şu an durmuş — daha önce işe yaramış bir kanal; yeniden aktivasyonla müşteri dönüşümü hızla başlatılabilir.`
 
+  // ── Kanıtlanmış kitle var ama reklam kodu yok ──
   if (site && !site.hasPixel && !site.hasGoogleAds && reviewCount >= 50 && profile.ads >= 3)
     return site.hasAnalytics
-      ? 'Sitede Analytics var ama Meta Pixel veya Google Ads kodu yok — müşteri davranışları izlenemiyor, reklam dönüşümü ölçülemiyor.'
-      : 'Sitede reklam/takip kodu yok — dijital reklam potansiyeli boşa gidiyor. Google Ads + Meta Pixel ile dönüşüm izleme hemen başlatılabilir.'
+      ? `${reviewCount}+ yorumlu köklü bir işletme, ama sitede reklam takip kodu yok — ziyaretçi kim, nereden geliyor bilinmiyor; reklam bütçesi kör gidiyor.`
+      : `${reviewCount}+ yorumla kanıtlanmış kitle var, ama sitede hiç reklam/takip kodu yok — altyapı kurulursa hızla ölçeklenebilir.`
 
-  if (instagram?.activity === 'neglected')
-    return 'Instagram hesabı var ama uzun süredir atıl — sosyal medya yönetimi + içerik stratejisi paketi için doğrudan ve güçlü bir satış argümanı.'
+  // ── Yorum sayısı bu sektörde kritik ──
+  if (isReviewFirst && reviewCount < 20)
+    return `Sadece ${reviewCount} Google yorumu — bu sektörde müşteriler karşılaştırma yaparak karar veriyor; az yorum rakibe yönlendiriyor.`
 
-  if (profile.seo >= 4 && (photoCount < 3 || !hasOpeningHours))
-    return 'Google profili eksik doldurulmuş — fotoğraf, saat ve kategori optimizasyonuyla yerel arama görünürlüğü artırılabilir.'
+  // ── Instagram ihmali (ikincil sektör) ──
+  if (instagram?.activity === 'neglected' && igDays)
+    return `Instagram ${igDays}+ gündür hareketsiz — mevcut takipçi kitlesi boşa gidiyor, rakipler o alanı dolduruyor.`
 
+  // ── Düşük puan ama büyük kitle ──
   if (rating !== undefined && rating < 3.5 && reviewCount >= 30)
-    return `Müşteri kitlesi var ama Google puanı düşük (${rating.toFixed(1)}/5). İtibar yönetimi + yorum kampanyasıyla dönüşüm artırılabilir.`
+    return `${reviewCount}+ yorum var ama ortalama puan ${rating.toFixed(1)}/5 — rakipler bu durumu fark ediyor ve müşterileri çekiyor; itibar yönetimiyle dönüşüm artırılabilir.`
 
-  return 'Temel altyapı mevcut. Hedefli reklam ve içerik stratejisiyle büyüme potansiyeli değerlendirilebilir.'
+  // ── Google profili eksik ──
+  if (profile.seo >= 4 && (photoCount < 3 || !hasOpeningHours))
+    return 'Google profili eksik doldurulmuş — fotoğraf ve çalışma saati olmadan yerel arama sıralaması düşüyor, rakipler önce görünüyor.'
+
+  return `Temel altyapı mevcut${reviewCount > 0 ? `, ${reviewCount} yorumla kanıtlanmış kitle var` : ''}. Hedefli reklam ve içerik stratejisiyle büyüme potansiyeli hızla değerlendirilebilir.`
 }
 
 // ─── Google Business Profil Tamamlanma Skoru ─────────────────────────────────
@@ -2408,6 +2368,19 @@ function buildLead(
     }
   }
 
+  // ── Güven Eşiği Filtrelemesi: %80 altı güven → null ──────────────────────
+  // 'possible' Instagram (~%40 doğruluk): yanlış hesap riski çok yüksek, çıkarılır
+  if (instagram?.confidence === 'possible') instagram = null
+
+  // Facebook aktivite verisi yalnızca 'definitive' eşleşmede güvenilir
+  // Snippet tabanlı eşleşmelerde (%30-40 doğruluk) aktivite/takipçi temizlenir
+  if (facebook && facebook.confidence !== 'definitive') {
+    facebook = { ...facebook, activity: 'unknown', followersCount: null, likesCount: null }
+  }
+
+  // TikTok: web sitesinde doğrulanmamış handle Google aramasından geliyor (~%50 doğruluk)
+  if (tiktok && tiktok.confidence !== 'definitive') tiktok = null
+
   const odemeGucu = computeEstablishment(
     reviewCount, rating, photoCount, hasOpeningHours, websiteSource, priceLevel, site, domainInfo,
   )
@@ -2584,112 +2557,122 @@ export async function GET(request: NextRequest) {
   // Meta çağrıları için throttle (max 3 eşzamanlı — 402 rate-limit önlemi)
   const metaThrottle = createThrottle(3)
 
-  // ── AŞAMA 2: Finalistlere detaylı analiz (paralel) ──
-  const leads = await Promise.all(
-    finalists.map(async ({ c, s }) => {
-      const details = await fetchPlaceDetails(c.placeId, apiKey)
+  // ── AŞAMA 2: Finalistlere detaylı analiz (streaming — her lead hazır olunca akıtılır) ──
+  const encoder = new TextEncoder()
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const emit = (obj: object) =>
+        controller.enqueue(encoder.encode(JSON.stringify(obj) + '\n'))
 
-      // Website kaynağını belirle (WhatsApp / sosyal medya URL'leri elenip domain tahminine geçilir)
-      const googleUri = details.websiteUri ?? null
-      const googleUriIsReal = googleUri ? isRealWebsite(googleUri) : false
-      if (googleUri && !googleUriIsReal) {
-        console.log(`[WEBSITE] "${c.name}" → Google URI elendi (sosyal medya/mesajlaşma): ${googleUri}`)
-      }
+      try {
+        await Promise.all(
+          finalists.map(async ({ c, s }) => {
+            try {
+              const details = await fetchPlaceDetails(c.placeId, apiKey)
 
-      let resolvedWebsiteUrl: string | null = googleUriIsReal ? googleUri : null
-      let websiteSource: 'google' | 'discovered' | 'none'
+              const googleUri = details.websiteUri ?? null
+              const googleUriIsReal = googleUri ? isRealWebsite(googleUri) : false
+              if (googleUri && !googleUriIsReal) {
+                console.log(`[WEBSITE] "${c.name}" → Google URI elendi (sosyal medya/mesajlaşma): ${googleUri}`)
+              }
 
-      if (resolvedWebsiteUrl) {
-        websiteSource = 'google'
-      } else {
-        const discovered = await guessAndCheckDomain(c.name)
-        if (discovered) {
-          resolvedWebsiteUrl = discovered
-          websiteSource = 'discovered'
-        } else {
-          websiteSource = 'none'
-        }
-      }
+              let resolvedWebsiteUrl: string | null = googleUriIsReal ? googleUri : null
+              let websiteSource: 'google' | 'discovered' | 'none'
 
-      const site = resolvedWebsiteUrl ? await analyzeSite(resolvedWebsiteUrl, apiKey) : null
-      const igHandleFromSite = site?.instagramHandle ?? null
-      const fbHandleFromSite = site?.facebookHandle ?? null
-      const ttHandleFromSite = site?.tiktokHandle ?? null
+              if (resolvedWebsiteUrl) {
+                websiteSource = 'google'
+              } else {
+                const discovered = await guessAndCheckDomain(c.name)
+                if (discovered) {
+                  resolvedWebsiteUrl = discovered
+                  websiteSource = 'discovered'
+                } else {
+                  websiteSource = 'none'
+                }
+              }
 
-      // Instagram, Facebook, TikTok, Meta Ads, domain yaşı ve platformlar PARALEL çalışır
-      const [instagram, facebook, tiktok, rawMetaItems, domainInfo, platforms] = await Promise.all([
-        // ── Instagram ──
-        apifyToken
-          ? igHandleFromSite
-            ? fetchInstagramProfile(igHandleFromSite, apifyToken, 'definitive', 'Web sitesindeki linkten bulundu')
-            : googleSearchInstagram(c.name, city ?? '', details.nationalPhoneNumber ?? null, apifyToken)
-          : Promise.resolve(null),
-        // ── Facebook ──
-        apifyToken
-          ? fbHandleFromSite
-            ? googleSearchFacebook(c.name, city ?? '', details.nationalPhoneNumber ?? null, apifyToken).then(
-                r => r ?? ({
-                  handle: fbHandleFromSite,
-                  pageUrl: `https://www.facebook.com/${fbHandleFromSite}`,
-                  followersCount: null,
-                  likesCount: null,
-                  lastPostDate: null,
-                  activity: 'unknown' as const,
-                  confidence: 'definitive' as const,
-                  confidenceReason: 'Web sitesindeki linkten bulundu',
-                } satisfies FacebookData),
+              const site = resolvedWebsiteUrl ? await analyzeSite(resolvedWebsiteUrl, apiKey) : null
+              const igHandleFromSite = site?.instagramHandle ?? null
+              const fbHandleFromSite = site?.facebookHandle ?? null
+              const ttHandleFromSite = site?.tiktokHandle ?? null
+
+              // Instagram, Facebook, TikTok, Meta Ads, domain yaşı ve platformlar PARALEL çalışır
+              const [instagram, facebook, tiktok, rawMetaItems, domainInfo, platforms] = await Promise.all([
+                // ── Instagram ──
+                apifyToken
+                  ? igHandleFromSite
+                    ? fetchInstagramProfile(igHandleFromSite, apifyToken, 'definitive', 'Web sitesindeki linkten bulundu')
+                    : googleSearchInstagram(c.name, city ?? '', details.nationalPhoneNumber ?? null, apifyToken)
+                  : Promise.resolve(null),
+                // ── Facebook ──
+                apifyToken
+                  ? fbHandleFromSite
+                    ? googleSearchFacebook(c.name, city ?? '', details.nationalPhoneNumber ?? null, apifyToken).then(
+                        r => r ?? ({
+                          handle: fbHandleFromSite,
+                          pageUrl: `https://www.facebook.com/${fbHandleFromSite}`,
+                          followersCount: null,
+                          likesCount: null,
+                          lastPostDate: null,
+                          activity: 'unknown' as const,
+                          confidence: 'definitive' as const,
+                          confidenceReason: 'Web sitesindeki linkten bulundu',
+                        } satisfies FacebookData),
+                      )
+                    : googleSearchFacebook(c.name, city ?? '', details.nationalPhoneNumber ?? null, apifyToken)
+                  : Promise.resolve(null),
+                // ── TikTok ──
+                apifyToken
+                  ? ttHandleFromSite
+                    ? fetchTiktokProfile(ttHandleFromSite, apifyToken, 'definitive', 'Web sitesindeki linkten bulundu')
+                    : googleSearchTiktok(c.name, city ?? '', details.nationalPhoneNumber ?? null, apifyToken)
+                  : Promise.resolve(null),
+                // ── Meta Ads ──
+                apifyToken
+                  ? metaThrottle(() => fetchMetaAdsRaw(c.name, apifyToken))
+                  : Promise.resolve(null),
+                // ── Domain yaşı (RDAP, ücretsiz) ──
+                resolvedWebsiteUrl ? fetchDomainAge(resolvedWebsiteUrl) : Promise.resolve(null),
+                // ── Platform varlığı (tek Google Search çağrısı) ──
+                apifyToken
+                  ? googleSearchPlatforms(c.name, sector, city ?? '', site?.youtubeHandle ?? null, apifyToken)
+                  : Promise.resolve(null),
+              ])
+
+              const metaAds = rawMetaItems !== null
+                ? buildMetaAdData(rawMetaItems, c.name, instagram)
+                : null
+
+              const topCompetitor = marketLeader && marketLeader.placeId !== c.placeId
+                ? { name: marketLeader.name, reviewCount: marketLeader.reviewCount, rating: marketLeader.rating ?? null }
+                : null
+
+              const lead = buildLead(
+                c, details, site, resolvedWebsiteUrl, websiteSource,
+                instagram, facebook, tiktok, metaAds, platforms,
+                s, candidates.length, categoryProfile, domainInfo, topCompetitor,
               )
-            : googleSearchFacebook(c.name, city ?? '', details.nationalPhoneNumber ?? null, apifyToken)
-          : Promise.resolve(null),
-        // ── TikTok ──
-        apifyToken
-          ? ttHandleFromSite
-            ? fetchTiktokProfile(ttHandleFromSite, apifyToken, 'definitive', 'Web sitesindeki linkten bulundu')
-            : googleSearchTiktok(c.name, city ?? '', details.nationalPhoneNumber ?? null, apifyToken)
-          : Promise.resolve(null),
-        // ── Meta Ads ──
-        apifyToken
-          ? metaThrottle(() => fetchMetaAdsRaw(c.name, apifyToken))
-          : Promise.resolve(null),
-        // ── Domain yaşı (RDAP, ücretsiz) ──
-        resolvedWebsiteUrl ? fetchDomainAge(resolvedWebsiteUrl) : Promise.resolve(null),
-        // ── Platform varlığı (tek Google Search çağrısı) ──
-        apifyToken
-          ? googleSearchPlatforms(c.name, sector, city ?? '', site?.youtubeHandle ?? null, apifyToken)
-          : Promise.resolve(null),
-      ])
 
-      // Meta Ads'i Instagram köprüsüyle doğrula (her iki paralel call bittikten sonra, senkron)
-      const metaAds = rawMetaItems !== null
-        ? buildMetaAdData(rawMetaItems, c.name, instagram)
-        : null
+              emit({ type: 'lead', data: lead })
+            } catch (err) {
+              console.error(`[LEAD] ${c.name}:`, err)
+            }
+          }),
+        )
+        emit({ type: 'done' })
+      } catch (err) {
+        emit({ type: 'error', message: err instanceof Error ? err.message : 'Analiz başarısız' })
+      } finally {
+        controller.close()
+      }
+    },
+  })
 
-      const topCompetitor = marketLeader && marketLeader.placeId !== c.placeId
-        ? { name: marketLeader.name, reviewCount: marketLeader.reviewCount, rating: marketLeader.rating ?? null }
-        : null
-
-      return buildLead(
-        c, details, site, resolvedWebsiteUrl, websiteSource,
-        instagram, facebook, tiktok, metaAds, platforms,
-        s, candidates.length, categoryProfile, domainInfo, topCompetitor,
-      )
-    }),
-  )
-
-  leads.sort((a, b) => b.score - a.score)
-
-  const resultLimit = businessName ? 1 : 10
-  const topLeads = leads.slice(0, resultLimit)
-  return Response.json({
-    leads: topLeads,
-    meta: {
-      candidates: candidates.length,
-      finalists: finalists.length,
-      pages: pagesFetched,
-      instagramFound: topLeads.filter(l => l.instagram).length,
-      facebookFound: topLeads.filter(l => l.facebook).length,
-      tiktokFound: topLeads.filter(l => l.tiktok).length,
-      metaAdsFound: topLeads.filter(l => l.metaAds && l.metaAds.totalAdCount > 0).length,
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'application/x-ndjson',
+      'Cache-Control': 'no-cache',
+      'X-Accel-Buffering': 'no',
     },
   })
 }
