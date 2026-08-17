@@ -1731,6 +1731,7 @@ function computeEstablishment(
   if (hasOpeningHours) s += 5
   if (websiteSource !== 'none') s += 5
   if (site?.hasPixel || site?.hasGoogleAds) s += 10
+  else if (site?.hasGTM) s += 7        // GTM üzerinden Pixel/Ads yüklenmiş olabilir
   else if (site?.hasAnalytics) s += 4  // GA4/Analytics var ama reklam kodu yok
   // Domain yaşı bonusu (RDAP)
   if (domainInfo) {
@@ -1803,26 +1804,38 @@ function computeGap(
   if (!hasOpeningHours) s += Math.round(5 * wSeo)
 
   // ── Instagram kanalı ──
-  if (instagram?.activity === 'neglected') s += Math.round(10 * wIg)
-  else if (instagram?.activity === 'dormant') s += Math.round(6 * wIg)
-  if (instagram?.engagementRate != null && instagram.engagementRate < 1) s += Math.round(8 * wIg)
-  if (instagram?.weeklyPostFreq != null && instagram.weeklyPostFreq < 1 && instagram.activity === 'active') s += Math.round(5 * wIg)
+  // 'possible' güven seviyesi (~%40 doğruluk): skorlamaya dahil etme
+  if (instagram?.confidence !== 'possible') {
+    if (instagram?.activity === 'neglected') s += Math.round(10 * wIg)
+    else if (instagram?.activity === 'dormant') s += Math.round(6 * wIg)
+    if (instagram?.engagementRate != null && instagram.engagementRate < 1) s += Math.round(8 * wIg)
+    if (instagram?.weeklyPostFreq != null && instagram.weeklyPostFreq < 1 && instagram.activity === 'active') s += Math.round(5 * wIg)
+  }
 
   // ── Meta Ads kanalı ──
   if (metaAds?.hasHistoricalAds && !metaAds.hasActiveAds) s += Math.round(12 * wAds)
 
   // ── Facebook kanalı ──
+  // Snippet parse ile bulunan Facebook verisi güvenilmez; aktivite cezası yalnızca
+  // 'definitive' eşleşmede uygulanır. "Yok" cezası her zaman geçerli.
   const wFb = (profile.ads + profile.instagram) / 2 / 5
   if (!facebook) s += Math.round(10 * wFb)
-  else if (facebook.activity === 'neglected') s += Math.round(12 * wFb)
-  else if (facebook.activity === 'dormant') s += Math.round(6 * wFb)
+  else if (facebook.confidence === 'definitive') {
+    if (facebook.activity === 'neglected') s += Math.round(12 * wFb)
+    else if (facebook.activity === 'dormant') s += Math.round(6 * wFb)
+  }
 
   // ── TikTok kanalı ──
+  // Yalnızca web sitesinde bulunan handle (yüksek güven) skora girer.
+  // Google aramasıyla bulunan TikTok çok yüksek yanlış eşleşme riski taşır.
   const wTt = profile.instagram / 5
+  const tiktokOnSite = tiktok?.confidenceReason?.includes('site') ?? false
   if (!tiktok && profile.instagram >= 3) s += Math.round(8 * wTt)
-  else if (tiktok?.activity === 'neglected') s += Math.round(10 * wTt)
-  else if (tiktok?.activity === 'dormant') s += Math.round(5 * wTt)
-  if (tiktok?.videosCount != null && tiktok.videosCount < 10) s += Math.round(3 * wTt)
+  else if (tiktok && tiktokOnSite) {
+    if (tiktok.activity === 'neglected') s += Math.round(10 * wTt)
+    else if (tiktok.activity === 'dormant') s += Math.round(5 * wTt)
+    if (tiktok.videosCount != null && tiktok.videosCount < 10) s += Math.round(3 * wTt)
+  }
 
   // ── Site içerik kalitesi (site varsa) ──
   if (site) {
@@ -1833,17 +1846,19 @@ function computeGap(
 
   // ── Yorum kalitesi ──
   if (lastReviewDate && daysSinceStr(lastReviewDate) > 90) s += Math.round(8 * wReview)
-  // Not: negativeReviewRate en fazla 5 yorumdan hesaplanır; eşik yüksek tutulur
-  if (negativeReviewRate !== null && negativeReviewRate > 50) s += Math.round(10 * wReview)
+  // negativeReviewRate skorlamadan çıkarıldı: Google Places max 5 yorum döndürür,
+  // bu örneklem istatistiksel anlamsız ve skoru yanıltır. UI'da gösterim korunuyor.
 
   // ── Google Business açıklaması ──
   if (!hasGoogleDescription) s += Math.round(3 * wSeo)
 
-  // ── Instagram bio kalitesi ──
-  if (instagram?.bioLength !== null && instagram?.bioLength !== undefined && instagram.bioLength < 30)
-    s += Math.round(4 * wIg)
-  if (instagram?.bio && !instagram.bioHasPhone && !instagram.bioHasUrl)
-    s += Math.round(5 * wIg)
+  // ── Instagram bio kalitesi (yalnızca doğrulanmış eşleşmelerde) ──
+  if (instagram?.confidence !== 'possible') {
+    if (instagram?.bioLength !== null && instagram?.bioLength !== undefined && instagram.bioLength < 30)
+      s += Math.round(4 * wIg)
+    if (instagram?.bio && !instagram.bioHasPhone && !instagram.bioHasUrl)
+      s += Math.round(5 * wIg)
+  }
 
   // ── Google Business profil dolgunluğu ──
   if (googleBusinessScore < 50) s += Math.round(10 * wSeo)
@@ -1858,16 +1873,18 @@ function computeGap(
   }
 
   // ── Platformlar (null = bu sektörde ilgisiz, false = ilgili ama eksik) ──
+  // 0.6 çarpanı: Google arama tabanlı tespit (~%60 güvenilirlik), direkt platform API'si değil
+  const PLATFORM_CONF = 0.6
   const wPlatform = (profile.googleReview + profile.ads) / 2 / 5
   if (platforms && platforms.yemeksepeti === false && platforms.getir === false)
-    s += Math.round(8 * wPlatform)
+    s += Math.round(8 * wPlatform * PLATFORM_CONF)
   if (platforms && platforms.tripadvisor === false)
-    s += Math.round(5 * wPlatform)
+    s += Math.round(5 * wPlatform * PLATFORM_CONF)
   if (platforms && platforms.marketplace === false && profile.ads >= 3)
-    s += Math.round(5 * wPlatform)
+    s += Math.round(5 * wPlatform * PLATFORM_CONF)
   if (platforms && platforms.bookingPlatform === false)
-    s += Math.round(7 * wPlatform)
-  if (platforms && !platforms.inLocalPack) s += Math.round(6 * wSeo)
+    s += Math.round(7 * wPlatform * PLATFORM_CONF)
+  if (platforms && !platforms.inLocalPack) s += Math.round(6 * wSeo * PLATFORM_CONF)
 
   return Math.min(s, 100)
 }
@@ -2363,6 +2380,33 @@ function buildLead(
   const metaAdsAge = metaAds?.oldestAdDate
     ? Math.floor((Date.now() - new Date(metaAds.oldestAdDate).getTime()) / 86_400_000)
     : null
+
+  // ── Çapraz Doğrulama: site handle = arama handle → kesin eşleşme ──
+  // Web sitesinde ve Google aramasında aynı handle bulunduysa güven 'definitive'e yükselir.
+  function normalizeHandle(h: string): string {
+    return h.toLowerCase().replace(/[@._\-]/g, '')
+  }
+  if (instagram && site?.instagramHandle) {
+    const sH = normalizeHandle(site.instagramHandle)
+    const aH = normalizeHandle(instagram.handle)
+    if (sH === aH && instagram.confidence !== 'definitive') {
+      instagram = { ...instagram, confidence: 'definitive', confidenceReason: 'Web sitesi ve Google araması aynı hesabı doğruluyor' }
+    }
+  }
+  if (facebook && site?.facebookHandle) {
+    const sH = normalizeHandle(site.facebookHandle)
+    const aH = normalizeHandle(facebook.handle)
+    if (sH === aH && facebook.confidence !== 'definitive') {
+      facebook = { ...facebook, confidence: 'definitive', confidenceReason: 'Web sitesi ve Google araması aynı sayfayı doğruluyor' }
+    }
+  }
+  if (tiktok && site?.tiktokHandle) {
+    const sH = normalizeHandle(site.tiktokHandle)
+    const aH = normalizeHandle(tiktok.handle)
+    if (sH === aH && tiktok.confidence !== 'definitive') {
+      tiktok = { ...tiktok, confidence: 'definitive', confidenceReason: 'Web sitesi ve Google araması aynı hesabı doğruluyor' }
+    }
+  }
 
   const odemeGucu = computeEstablishment(
     reviewCount, rating, photoCount, hasOpeningHours, websiteSource, priceLevel, site, domainInfo,
