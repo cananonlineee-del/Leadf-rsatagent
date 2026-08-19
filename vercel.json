@@ -3,6 +3,10 @@
     {
       "path": "/api/cron/monitor",
       "schedule": "0 6 * * *"
+    },
+    {
+      "path": "/api/cron/warm-leads",
+      "schedule": "0 7 * * *"
     }
   ]
 }
