@@ -2513,10 +2513,7 @@ export async function GET(request: NextRequest) {
   const city         = params.get('city')?.trim()
   const businessName = params.get('businessName')?.trim()
 
-  if (businessName) {
-    if (!sector)
-      return Response.json({ error: 'Sektör zorunludur.' }, { status: 400 })
-  } else {
+  if (!businessName) {
     if (!sector || !city)
       return Response.json({ error: 'Sektör ve şehir alanları zorunludur.' }, { status: 400 })
   }
@@ -2528,7 +2525,7 @@ export async function GET(request: NextRequest) {
   const apifyToken = process.env.APIFY_TOKEN ?? null
 
   // Sektör → kategori profili (tüm puanlama/eksik/pitch buna göre ağırlıklanır)
-  const categoryProfile = getCategoryProfile(sector)
+  const categoryProfile = getCategoryProfile(sector ?? '')
 
   // ── AŞAMA 1: Geniş ucuz tarama ──
   const searchQuery = businessName
@@ -2635,7 +2632,7 @@ export async function GET(request: NextRequest) {
                 resolvedWebsiteUrl ? fetchDomainAge(resolvedWebsiteUrl) : Promise.resolve(null),
                 // ── Platform varlığı (tek Google Search çağrısı) ──
                 apifyToken
-                  ? googleSearchPlatforms(c.name, sector, city ?? '', site?.youtubeHandle ?? null, apifyToken)
+                  ? googleSearchPlatforms(c.name, sector ?? '', city ?? '', site?.youtubeHandle ?? null, apifyToken)
                   : Promise.resolve(null),
               ])
 
