@@ -1,6 +1,7 @@
 'use client'
 
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, Suspense } from 'react'
+import { useSearchParams } from 'next/navigation'
 import type { Lead, InstagramData, MetaAdData, FacebookData, TikTokData } from '../api/analyze/route'
 import { IL_ILCE, ILLER } from '../../lib/turkiye-il-ilce'
 import { Navbar } from '../components/navbar'
@@ -1139,11 +1140,14 @@ const labelCls  = 'block text-[10px] text-zinc-500 uppercase tracking-widest mb-
 
 // ─── Analiz Sayfası ───────────────────────────────────────────────────────────
 
-export default function AnalizPage() {
-  const [searchMode, setSearchMode]         = useState<'bulk' | 'single'>('bulk')
-  const [businessQuery, setBusinessQuery]   = useState('')
+function AnalizContent() {
+  const searchParams = useSearchParams()
+  const [searchMode, setSearchMode]         = useState<'bulk' | 'single'>(
+    searchParams.get('businessName') ? 'single' : 'bulk'
+  )
+  const [businessQuery, setBusinessQuery]   = useState(searchParams.get('businessName') ?? '')
   const [sector, setSector]                 = useState('')
-  const [selectedIl, setSelectedIl]         = useState('')
+  const [selectedIl, setSelectedIl]         = useState(searchParams.get('city') ?? '')
   const [selectedIlce, setSelectedIlce]     = useState('')
   const [cityDisplayValue, setCityDisplayValue] = useState('')
   const [extraCities, setExtraCities]           = useState<Array<{il: string; ilce: string}>>([])
@@ -1794,5 +1798,13 @@ export default function AnalizPage() {
 
       </div>
     </div>
+  )
+}
+
+export default function AnalizPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-[#111115]" />}>
+      <AnalizContent />
+    </Suspense>
   )
 }
