@@ -1141,9 +1141,10 @@ const labelCls  = 'block text-[10px] text-zinc-500 uppercase tracking-widest mb-
 // ─── Analiz Sayfası ───────────────────────────────────────────────────────────
 
 function AnalizContent() {
-  const searchParams = useSearchParams()
+  const searchParams   = useSearchParams()
+  const fromWarmLead   = !!searchParams.get('businessName')
   const [searchMode, setSearchMode]         = useState<'bulk' | 'single'>(
-    searchParams.get('businessName') ? 'single' : 'bulk'
+    fromWarmLead ? 'single' : 'bulk'
   )
   const [businessQuery, setBusinessQuery]   = useState(searchParams.get('businessName') ?? '')
   const [sector, setSector]                 = useState('')
@@ -1192,6 +1193,14 @@ function AnalizContent() {
   const [isLoggedIn, setIsLoggedIn]             = useState(false)
 
   const supabase = createClient()
+
+  // ── Sıcak lead'den gelince otomatik analiz başlat ──
+  useEffect(() => {
+    if (fromWarmLead && businessQuery.trim().length >= 2) {
+      const syntheticEvent = { preventDefault: () => {} } as React.FormEvent
+      setTimeout(() => handleSubmit(syntheticEvent), 300)
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Auth durumu + kayıtlı aramalar ──
   useEffect(() => {
@@ -1321,7 +1330,7 @@ function AnalizContent() {
   const hasCity = selectedIl.length > 0 && selectedIlce.length > 0
   const canSubmit = !loading && (
     searchMode === 'single'
-      ? businessQuery.trim().length >= 2 && sector.trim().length > 0
+      ? businessQuery.trim().length >= 2
       : sector.trim().length > 0 && (hasCity || extraCities.length > 0)
   )
 
