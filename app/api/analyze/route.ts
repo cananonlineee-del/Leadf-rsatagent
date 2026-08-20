@@ -182,6 +182,10 @@ export interface PlatformPresence {
   youtubeHandle: string | null
   /** Google yerel 3-paketinde (local pack) görünüyor mu */
   inLocalPack: boolean
+  /** Google arama sonuçlarından çıkarılan e-posta adresi (site HTML'inden bulunamadıysa) */
+  emailFromSearch: string | null
+  /** LinkedIn şirket/profil URL'si */
+  linkedinUrl: string | null
 }
 
 export interface Lead {
@@ -189,6 +193,8 @@ export interface Lead {
   name: string
   address: string
   phone: string | null
+  /** E-posta: site HTML'inden veya Google arama sonuçlarından birleştirilir */
+  email: string | null
   website: string | null
   websiteSource: 'google' | 'discovered' | 'none'
   rating: number | null
@@ -2195,6 +2201,8 @@ async function googleSearchPlatforms(
     bookingPlatform: hasBookingPlatform ? false : null,
     youtubeHandle:   siteYoutube,
     inLocalPack:     false,
+    emailFromSearch: null,
+    linkedinUrl:     null,
   }
 
   const ctrl = new AbortController()
@@ -2208,6 +2216,7 @@ async function googleSearchPlatforms(
       bookingQuery                  ? bookingQuery                                                        : '',
       !siteYoutube                  ? `"${businessName}" youtube.com`                                    : '',
       `${sector} ${cityQuery}`,   // yerel paket için daima dahil
+      `"${businessName}" ${cityQuery} iletişim`,  // e-posta ve LinkedIn keşfi için
     ].filter(Boolean).join('\n')
 
     const res = await fetch(
@@ -2265,6 +2274,23 @@ async function googleSearchPlatforms(
           (url.includes('youtube.com/channel/') || url.includes('youtube.com/@') || url.includes('youtube.com/c/'))
         ) {
           result.youtubeHandle = r.url ?? null
+        }
+        // LinkedIn şirket/profil sayfası
+        if (!result.linkedinUrl && (url.includes('linkedin.com/company/') || url.includes('linkedin.com/in/'))) {
+          result.linkedinUrl = r.url ?? null
+        }
+        // E-posta adresi çıkar — başlık veya snippet'ten
+        if (!result.emailFromSearch) {
+          const combined = `${r.title ?? ''} ${r.description ?? ''}`
+          const emailMatch = /\b[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}\b/.exec(combined)
+          if (emailMatch) {
+            const addr = emailMatch[0].toLowerCase()
+            // Sosyal medya, no-reply ve genel sistem adreslerini atla
+            if (!/^(no-?reply|info@gmail|info@yahoo|noreply|support@|admin@|mailer@|postmaster@)/.test(addr) &&
+                !addr.includes('@sentry.') && !addr.includes('@example.') && !addr.includes('@schema.')) {
+              result.emailFromSearch = addr
+            }
+          }
         }
       }
 
@@ -2401,6 +2427,7 @@ function buildLead(
     name: c.name,
     address: c.address,
     phone: details.nationalPhoneNumber ?? null,
+    email: site?.emailAddress ?? platforms?.emailFromSearch ?? null,
     website: resolvedWebsiteUrl,
     websiteSource,
     rating: rating ?? null,

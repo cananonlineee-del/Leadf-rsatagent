@@ -64,6 +64,10 @@ export async function generateLeadPDF(
     addText(lead.phone, margin, y, { size: 9, color: [100, 100, 120] })
     y += 5
   }
+  if (lead.email) {
+    addText(lead.email, margin, y, { size: 9, color: [100, 100, 120] })
+    y += 5
+  }
   if (lead.website) {
     addText(lead.website, margin, y, { size: 9, color: [80, 80, 200] })
     y += 5

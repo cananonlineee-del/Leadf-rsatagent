@@ -305,7 +305,7 @@ function CityAutocomplete({
 
 // ─── LeadCard ─────────────────────────────────────────────────────────────────
 
-type DetailTab = 'google' | 'web' | 'sosyal' | 'firsat'
+type DetailTab = 'google' | 'web' | 'sosyal' | 'reklamlar' | 'firsat'
 
 function LeadCard({
   lead,
@@ -396,9 +396,8 @@ function LeadCard({
     lead.instagram?.activity === 'neglected' ||
     lead.instagram?.activity === 'dormant'
   const adsUrgent =
-    lead.websiteSource !== 'none' &&
-    !lead.siteAnalysis?.hasPixel &&
-    !lead.siteAnalysis?.hasGoogleAds
+    (lead.websiteSource !== 'none' && !lead.siteAnalysis?.hasPixel && !lead.siteAnalysis?.hasGoogleAds) ||
+    (lead.metaAds?.hasHistoricalAds === true && !lead.metaAds?.hasActiveAds)
 
   const services = [
     { label: 'Web Sitesi',      urgent: siteUrgent,   weight: lead.categoryProfile.website },
@@ -416,7 +415,6 @@ function LeadCard({
     !lead.website,
     _s && !_s.ssl,
     _s && _s.mobileScore !== null && _s.mobileScore < 70,
-    _s && !_s.hasPixel && !_s.hasGoogleAds,
     _s && !_s.hasSocialLinks,
     _s && (_s.pageTitle === null || _s.pageTitle.length < 20),
     _s && !_s.hasMetaDesc,
@@ -452,6 +450,13 @@ function LeadCard({
     !_fb2,
     _fb2 && _fb2.activity !== 'active' && _fb2.activity !== 'unknown',
     _tt2 && _tt2.activity !== 'active',
+  ].filter(Boolean).length
+
+  const adsBadgeCount = [
+    // Web sitesi var ama ne pixel ne Google Ads kodu
+    _s && !_s.hasPixel && !_s.hasGoogleAds && lead.categoryProfile.ads >= 3,
+    // Meta Ads geçmişte vardı ama şu an durmuş
+    lead.metaAds?.hasHistoricalAds && !lead.metaAds?.hasActiveAds,
   ].filter(Boolean).length
 
 
@@ -614,7 +619,7 @@ function LeadCard({
         </div>
 
         {/* ── İletişim ─────────────────────────────────────────────────── */}
-        {(lead.phone || lead.siteAnalysis?.emailAddress) && (
+        {(lead.phone || lead.email) && (
           <div className="flex flex-wrap gap-2 mb-3">
             {lead.phone && (
               <div className="flex items-center gap-0 bg-white/[0.04] border border-white/[0.08] rounded-lg overflow-hidden">
@@ -634,22 +639,27 @@ function LeadCard({
                 </button>
               </div>
             )}
-            {lead.siteAnalysis?.emailAddress && (
+            {lead.email && (
               <div className="flex items-center gap-0 bg-white/[0.04] border border-white/[0.08] rounded-lg overflow-hidden">
                 <a
-                  href={`mailto:${lead.siteAnalysis.emailAddress}`}
+                  href={`mailto:${lead.email}`}
                   className="pl-2.5 pr-1.5 py-1.5 text-xs text-zinc-300 hover:text-white transition-colors font-medium leading-none flex items-center gap-1.5"
                 >
-                  ✉ {lead.siteAnalysis.emailAddress}
-                  {lead.siteAnalysis.hasCorpEmail === false && (
+                  ✉ {lead.email}
+                  {lead.siteAnalysis?.hasCorpEmail === false && lead.email === lead.siteAnalysis?.emailAddress && (
                     <span className="text-[9px] bg-amber-500/10 text-amber-500 border border-amber-500/20 px-1 py-px rounded font-semibold">
                       ücretsiz
+                    </span>
+                  )}
+                  {lead.email !== lead.siteAnalysis?.emailAddress && (
+                    <span className="text-[9px] bg-white/5 text-zinc-600 border border-white/10 px-1 py-px rounded font-semibold">
+                      arama
                     </span>
                   )}
                 </a>
                 <button
                   type="button"
-                  onClick={() => copyText(lead.siteAnalysis!.emailAddress!, 'email')}
+                  onClick={() => copyText(lead.email!, 'email')}
                   title="Kopyala"
                   className="px-2 py-1.5 border-l border-white/[0.08] text-[11px] text-zinc-600 hover:text-white hover:bg-white/[0.08] transition-colors leading-none"
                 >
@@ -708,10 +718,11 @@ function LeadCard({
           {/* Tab bar */}
           <div className="flex items-center overflow-x-auto border-b border-white/[0.06] bg-[#17171d] px-2 gap-0.5">
             {([
-              { id: 'google',   label: 'Google',   count: googleBadgeCount },
-              { id: 'web',      label: 'Web',       count: webBadgeCount },
-              { id: 'sosyal',   label: 'Sosyal',    count: socialBadgeCount },
-              { id: 'firsat',   label: 'Fırsat',    count: 0 },
+              { id: 'google',    label: 'Google',   count: googleBadgeCount },
+              { id: 'web',       label: 'Web',       count: webBadgeCount },
+              { id: 'sosyal',    label: 'Sosyal',    count: socialBadgeCount },
+              { id: 'reklamlar', label: 'Reklamlar', count: adsBadgeCount },
+              { id: 'firsat',    label: 'Fırsat',    count: 0 },
             ] as { id: DetailTab; label: string; count: number }[]).map(tab => (
               <button
                 key={tab.id}
@@ -899,20 +910,119 @@ function LeadCard({
                     <Row label="TikTok"><span className="text-xs text-zinc-600">Hesap bulunamadı</span></Row>
                   )}
                   {ttProblems}
-                  {lead.metaAds && (
-                    <Row label="Meta Reklamlar">
-                      {lead.metaAds.hasActiveAds ? (
-                        <span className="text-xs font-semibold text-blue-400">✓ {lead.metaAds.activeAdCount} aktif reklam</span>
-                      ) : lead.metaAds.hasHistoricalAds ? (
-                        <span className="text-xs font-semibold text-orange-400">{lead.metaAds.totalAdCount} reklam — şu an pasif</span>
-                      ) : (
-                        <span className="text-xs text-zinc-600">Reklam bulunamadı</span>
-                      )}
+                  {lead.platforms?.linkedinUrl && (
+                    <Row label="LinkedIn">
+                      <a href={lead.platforms.linkedinUrl} target="_blank" rel="noopener noreferrer" className="text-xs font-semibold text-blue-300 hover:underline truncate block max-w-[200px]">
+                        {lead.platforms.linkedinUrl.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '')}
+                      </a>
                     </Row>
                   )}
                 </dl>
                 {ig?.confidence === 'possible' && (
                   <p className="text-[11px] text-amber-400 bg-amber-500/10 rounded px-2 py-1.5 mt-2 leading-relaxed">{ig.confidenceReason}</p>
+                )}
+              </section>
+            )
+          })()}
+
+          {/* Reklamlar */}
+          {activeTab === 'reklamlar' && (() => {
+            const s = lead.siteAnalysis
+            const adsProblems: React.ReactNode[] = []
+
+            // Google Ads / Pixel durumu
+            if (s) {
+              if (!s.hasPixel && !s.hasGoogleAds) {
+                adsProblems.push(
+                  <Row key="nopx" label="Reklam Kodu">
+                    <span className="text-xs font-medium text-red-400">
+                      {s.hasAnalytics ? '✕ Pixel ve Ads kodu yok (yalnızca Analytics var)' : '✕ Hiçbir reklam/dönüşüm kodu yok'}
+                    </span>
+                  </Row>
+                )
+              }
+              if (lead.metaAds?.hasHistoricalAds && !lead.metaAds.hasActiveAds) {
+                adsProblems.push(
+                  <Row key="metastopped" label="Meta Reklamlar">
+                    <span className="text-xs font-semibold text-orange-400">
+                      {lead.metaAds.totalAdCount} reklam geçmişte verilmiş — şu an durmuş
+                    </span>
+                  </Row>
+                )
+              }
+            }
+
+            return (
+              <section className="px-5 py-4">
+                <h4 className="text-[10px] font-bold text-zinc-600 uppercase tracking-widest mb-3">
+                  Reklam Altyapısı
+                  {adsProblems.length > 0 && <span className="text-red-400 ml-2">({adsProblems.length} sorun)</span>}
+                </h4>
+
+                {/* Google Ads (pixel/kod) */}
+                <div className="mb-4">
+                  <p className="text-[10px] font-bold text-zinc-700 uppercase tracking-wider mb-2">Web Sitesi Reklam Kodları</p>
+                  {!lead.website ? (
+                    <p className="text-xs text-zinc-600">Web sitesi olmadığı için reklam kodu kontrol edilemedi.</p>
+                  ) : !s ? (
+                    <p className="text-xs text-zinc-600">Site içeriği okunamadı — reklam kodu kontrol edilemedi.</p>
+                  ) : (
+                    <dl className="space-y-2">
+                      <Row label="Meta Pixel">
+                        {s.hasPixel
+                          ? <span className="text-xs font-semibold text-emerald-400">✓ Tespit edildi</span>
+                          : <span className="text-xs font-medium text-red-400">✕ Yok</span>}
+                      </Row>
+                      <Row label="Google Ads Kodu">
+                        {s.hasGoogleAds
+                          ? <span className="text-xs font-semibold text-emerald-400">✓ Tespit edildi</span>
+                          : <span className="text-xs font-medium text-red-400">✕ Yok</span>}
+                      </Row>
+                      <Row label="Google Tag Manager">
+                        {s.hasGTM
+                          ? <span className="text-xs font-semibold text-emerald-400">✓ Var</span>
+                          : <span className="text-xs text-zinc-600">Yok</span>}
+                      </Row>
+                      <Row label="Google Analytics">
+                        {s.hasAnalytics
+                          ? <span className="text-xs font-semibold text-emerald-400">✓ Var</span>
+                          : <span className="text-xs text-zinc-600">Yok</span>}
+                      </Row>
+                    </dl>
+                  )}
+                </div>
+
+                {/* Meta Reklam Kütüphanesi */}
+                <div>
+                  <p className="text-[10px] font-bold text-zinc-700 uppercase tracking-wider mb-2">Meta Reklam Kütüphanesi</p>
+                  {lead.metaAds ? (
+                    <dl className="space-y-2">
+                      <Row label="Aktif Reklamlar">
+                        {lead.metaAds.hasActiveAds
+                          ? <span className="text-xs font-semibold text-emerald-400">✓ {lead.metaAds.activeAdCount} aktif reklam</span>
+                          : <span className="text-xs text-zinc-500">Aktif reklam yok</span>}
+                      </Row>
+                      <Row label="Geçmiş Reklamlar">
+                        {lead.metaAds.hasHistoricalAds
+                          ? <span className={`text-xs font-semibold ${lead.metaAds.hasActiveAds ? 'text-zinc-400' : 'text-orange-400'}`}>
+                              {lead.metaAds.totalAdCount} reklam{lead.metaAds.hasActiveAds ? '' : ' — şu an durmuş'}
+                            </span>
+                          : <span className="text-xs text-zinc-600">Geçmişte de reklam yok</span>}
+                      </Row>
+                      <Row label="Güven">
+                        {(() => { const b = metaBadge(lead.metaAds.confidence); return <span title={lead.metaAds.confidenceReason} className={`px-1.5 py-0.5 rounded text-[10px] font-semibold cursor-default ${b.cls}`}>{b.label}</span> })()}
+                      </Row>
+                    </dl>
+                  ) : (
+                    <p className="text-xs text-zinc-600">Meta Reklam Kütüphanesi'nde eşleşme bulunamadı.</p>
+                  )}
+                </div>
+
+                {adsProblems.length > 0 && (
+                  <div className="mt-4 pt-3 border-t border-white/[0.07]">
+                    <p className="text-[10px] font-bold text-zinc-700 uppercase tracking-wider mb-2">Öne Çıkan Sorunlar</p>
+                    <dl className="space-y-2">{adsProblems}</dl>
+                  </div>
                 )}
               </section>
             )
