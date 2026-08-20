@@ -1517,10 +1517,36 @@ function AnalizContent() {
     })
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ── Sıcak lead company_name temizleyici ─────────────────────────────────
+  // Bazı eski kayıtlarda company_name alanında iş unvanı metni de olabilir.
+  // "Dijital Pazarlama Uzmanı Work Medya" → "Work Medya" gibi temizler.
+  function getSearchableCompany(rawName: string, jobTitle: string): string {
+    const kwWords = jobTitle
+      .toLowerCase()
+      .split(/\s+/)
+      .filter(w => w.length > 3)
+      .slice(0, 3)
+    for (const kw of kwWords) {
+      const idx = rawName.toLowerCase().indexOf(kw)
+      if (idx > 3) {
+        // kw'dan önce işletme adı var
+        const before = rawName.slice(0, idx).trim().replace(/[-–\s]+$/, '')
+        if (before.length >= 2) return before
+        // kw'dan sonra işletme adı var
+        const after = rawName.slice(idx + kw.length).trim().replace(/^[-–\s]+/, '')
+        if (after.length >= 2) return after
+      }
+    }
+    return rawName
+  }
+
   // ── Sıcak lead kartından analiz başlat ───────────────────────────────────
   async function handleWarmLeadAnalyze(lead: WarmLead) {
     if (loading) return
-    setBusinessQuery(lead.company_name)
+    // Sicak moddan çık → normal sonuç alanı görünsün (skeleton + lead kartları)
+    setSearchMode('single')
+    const companyName = getSearchableCompany(lead.company_name, lead.job_title)
+    setBusinessQuery(companyName)
     const cityIl = lead.city?.split(',').map(s => s.trim()).find(s => ILLER.includes(s)) ?? ''
     setSelectedIl(cityIl)
     setLoading(true)
@@ -1532,7 +1558,7 @@ function AnalizContent() {
     setCrmMap({})
     const seen = new Set<string>()
     try {
-      const url = `/api/analyze?businessName=${encodeURIComponent(lead.company_name)}${cityIl ? '&city=' + encodeURIComponent(cityIl) : ''}`
+      const url = `/api/analyze?businessName=${encodeURIComponent(companyName)}${cityIl ? '&city=' + encodeURIComponent(cityIl) : ''}`
       await readLeadStream(url, seen)
     } catch {
       setError('Beklenmeyen bir hata oluştu.')
