@@ -630,7 +630,7 @@ async function fetchPageSpeedData(siteUrl: string, apiKey: string): Promise<Page
   ].join(',')
 
   const ctrl = new AbortController()
-  const timer = setTimeout(() => ctrl.abort(), 18_000)
+  const timer = setTimeout(() => ctrl.abort(), 28_000)   // 18→28s: PageSpeed API 15-25s sürer
 
   const empty: PageSpeedData = {
     mobileScore: null, desktopScore: null,

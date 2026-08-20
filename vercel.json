@@ -1,4 +1,15 @@
 {
+  "functions": {
+    "app/api/analyze/route.ts": {
+      "maxDuration": 300
+    },
+    "app/api/cron/warm-leads/route.ts": {
+      "maxDuration": 300
+    },
+    "app/api/cron/monitor/route.ts": {
+      "maxDuration": 300
+    }
+  },
   "crons": [
     {
       "path": "/api/cron/monitor",
