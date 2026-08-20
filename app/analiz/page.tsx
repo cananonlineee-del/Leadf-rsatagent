@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback, Suspense } from 'react'
+import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import type { Lead, InstagramData, MetaAdData, FacebookData, TikTokData } from '../api/analyze/route'
 import { IL_ILCE, ILLER } from '../../lib/turkiye-il-ilce'
@@ -64,14 +65,20 @@ function WarmLeadListCard({
   lead,
   onAnalyze,
   analyzing,
+  isActiveAnalysis,
 }: {
-  lead:     WarmLead
-  onAnalyze:(lead: WarmLead) => void
-  analyzing: boolean
+  lead:             WarmLead
+  onAnalyze:        (lead: WarmLead) => void
+  analyzing:        boolean
+  isActiveAnalysis: boolean
 }) {
   const src = WL_SOURCE_LABEL[lead.source] ?? WL_SOURCE_LABEL.kariyer
   return (
-    <div className="bg-[#1c1c22] border border-white/[0.10] rounded-2xl p-4 flex items-start gap-4">
+    <div className={`border rounded-2xl p-4 flex items-start gap-4 transition-all ${
+      isActiveAnalysis
+        ? 'bg-blue-500/[0.06] border-blue-500/40 ring-1 ring-blue-500/20'
+        : 'bg-[#1c1c22] border-white/[0.10]'
+    }`}>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap mb-1">
           <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full border ${src.cls}`}>
@@ -81,10 +88,12 @@ function WarmLeadListCard({
             <span className="text-[10px] text-zinc-600">{lead.city}</span>
           )}
         </div>
-        <p className="text-sm font-bold text-white truncate">{lead.company_name}</p>
+        <p className={`text-sm font-bold truncate ${isActiveAnalysis ? 'text-blue-200' : 'text-white'}`}>
+          {lead.company_name}
+        </p>
         <p className="text-xs text-zinc-500 mt-0.5">{lead.job_title}</p>
         {lead.snippet && (
-          <p className="text-[10px] text-zinc-700 mt-1.5 line-clamp-2 leading-relaxed">
+          <p className="text-[10px] text-zinc-600 mt-1.5 line-clamp-2 leading-relaxed">
             {lead.snippet}
           </p>
         )}
@@ -93,9 +102,18 @@ function WarmLeadListCard({
         <button
           onClick={() => onAnalyze(lead)}
           disabled={analyzing}
-          className="text-[11px] font-bold bg-blue-600 hover:bg-blue-500 text-white rounded-xl px-4 py-2 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          className={`text-[11px] font-bold text-white rounded-xl px-4 py-2 transition-colors disabled:cursor-not-allowed ${
+            isActiveAnalysis
+              ? 'bg-blue-500 opacity-100'
+              : 'bg-blue-600 hover:bg-blue-500 disabled:opacity-40'
+          }`}
         >
-          {analyzing ? '…' : 'Analiz Et →'}
+          {isActiveAnalysis ? (
+            <span className="flex items-center gap-1.5">
+              <span className="w-2.5 h-2.5 border border-white/40 border-t-white rounded-full animate-spin" />
+              Analiz…
+            </span>
+          ) : 'Analiz Et →'}
         </button>
         <a
           href={lead.job_url}
@@ -1492,6 +1510,10 @@ function AnalizContent() {
   const [warmLeadLimit, setWarmLeadLimit]     = useState(10)
   const [warmRegion, setWarmRegion]           = useState<string>('all')
   const [warmSearchDone, setWarmSearchDone]   = useState(false)
+  const [analyzingLeadId, setAnalyzingLeadId] = useState<string | null>(null)
+
+  // Fix 3 — Analiz sonuçlarına otomatik scroll
+  const resultsAnchorRef = useRef<HTMLDivElement>(null)
 
   const supabase = createClient()
 
@@ -1545,6 +1567,17 @@ function AnalizContent() {
     if (loading) return
     // Sicak moddan çık → normal sonuç alanı görünsün (skeleton + lead kartları)
     setSearchMode('single')
+    setAnalyzingLeadId(lead.id)
+
+    // Fix 1: is_seen olarak işaretle — /sicak sayfasıyla senkron
+    setWarmLeads(prev => prev.map(l => l.id === lead.id ? { ...l, is_seen: true } : l))
+    supabase.from('warm_leads').update({ is_seen: true }).eq('id', lead.id)
+
+    // Fix 3: Sonuç alanına kaydır (render bekle)
+    setTimeout(() => {
+      resultsAnchorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }, 80)
+
     const companyName = getSearchableCompany(lead.company_name, lead.job_title)
     setBusinessQuery(companyName)
     const cityIl = lead.city?.split(',').map(s => s.trim()).find(s => ILLER.includes(s)) ?? ''
@@ -1564,6 +1597,7 @@ function AnalizContent() {
       setError('Beklenmeyen bir hata oluştu.')
     } finally {
       setLoading(false)
+      setAnalyzingLeadId(null)
     }
   }
 
@@ -2079,9 +2113,13 @@ function AnalizContent() {
                 <span className="text-white font-semibold">{warmLeads.length} sıcak lead</span>
                 {warmRegion !== 'all' && <span className="text-zinc-600"> · {BOLGE_LABELS[warmRegion]}</span>}
               </p>
-              <p className="text-[10px] text-zinc-700">
-                Dijital pazarlama uzmanı arayan şirketler
-              </p>
+              {/* Fix 1: /sicak tam listesine yönlendir — iki arayüzün farkını netleştir */}
+              <Link
+                href="/sicak"
+                className="text-[10px] text-zinc-600 hover:text-blue-400 transition-colors border border-white/[0.07] hover:border-blue-500/20 rounded-lg px-2.5 py-1"
+              >
+                Tam liste →
+              </Link>
             </div>
             {warmLeadsLoading ? (
               <div className="space-y-3">
@@ -2092,7 +2130,7 @@ function AnalizContent() {
             ) : warmLeads.length === 0 ? (
               <div className="rounded-xl border border-white/[0.07] bg-white/[0.02] px-5 py-10 text-center">
                 <p className="text-zinc-500 text-sm">Bu bölgede kayıtlı sıcak lead yok.</p>
-                <p className="text-zinc-600 text-xs mt-1">Cron her gün 07:00&apos;de çalışır ve yeni ilanları ekler.</p>
+                <p className="text-zinc-600 text-xs mt-1">Her sabah 07:00&apos;de otomatik güncellenir.</p>
               </div>
             ) : (
               <div className="space-y-3">
@@ -2102,12 +2140,16 @@ function AnalizContent() {
                     lead={lead}
                     onAnalyze={handleWarmLeadAnalyze}
                     analyzing={loading}
+                    isActiveAnalysis={analyzingLeadId === lead.id}
                   />
                 ))}
               </div>
             )}
           </div>
         )}
+
+        {/* Fix 3 — Scroll anchor: sıcak lead analizinden gelince buraya kaydır */}
+        <div ref={resultsAnchorRef} />
 
         {/* İlk lead gelmeden tam ekran loader */}
         {loading && !searched && searchMode !== 'sicak' && (
