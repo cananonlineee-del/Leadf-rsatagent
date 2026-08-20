@@ -16,7 +16,7 @@ import {
 import { generateLeadPDF } from '../../lib/pdf'
 import { createClient } from '../../lib/supabase/client'
 
-// ─── Sıcak Lead tipleri ───────────────────────────────────────────────────────
+// ─── Sıcak Lead tipleri & sabitler ───────────────────────────────────────────
 
 interface WarmLead {
   id:           string
@@ -36,43 +36,76 @@ const WL_SOURCE_LABEL: Record<string, { label: string; cls: string }> = {
   jooble:  { label: 'Jooble TR',   cls: 'bg-violet-500/15 text-violet-400 border-violet-500/20' },
 }
 
-// ─── Sıcak Lead Yan Panel Kartı ───────────────────────────────────────────────
+// Bölge → şehir eşleşmesi (warm lead filtrelemesi için)
+const BOLGE_CITIES: Record<string, string[]> = {
+  marmara:      ['İstanbul', 'Bursa', 'Kocaeli', 'Tekirdağ', 'Edirne', 'Kırklareli', 'Balıkesir', 'Çanakkale', 'Yalova', 'Sakarya', 'Bilecik'],
+  ege:          ['İzmir', 'Manisa', 'Aydın', 'Denizli', 'Muğla', 'Afyonkarahisar', 'Kütahya', 'Uşak'],
+  akdeniz:      ['Antalya', 'Mersin', 'Adana', 'Hatay', 'Osmaniye', 'Kahramanmaraş', 'Burdur', 'Isparta'],
+  ic_anadolu:   ['Ankara', 'Konya', 'Kayseri', 'Eskişehir', 'Sivas', 'Aksaray', 'Kırıkkale', 'Kırşehir', 'Nevşehir', 'Niğde', 'Yozgat', 'Çankırı', 'Karaman'],
+  karadeniz:    ['Samsun', 'Trabzon', 'Ordu', 'Giresun', 'Rize', 'Artvin', 'Zonguldak', 'Bartın', 'Karabük', 'Kastamonu', 'Sinop', 'Bolu', 'Düzce', 'Amasya', 'Tokat', 'Çorum', 'Bayburt', 'Gümüşhane'],
+  dogu_anadolu: ['Erzurum', 'Malatya', 'Elazığ', 'Van', 'Ağrı', 'Erzincan', 'Bingöl', 'Tunceli', 'Muş', 'Bitlis', 'Hakkari', 'Iğdır', 'Kars', 'Ardahan'],
+  guneydogu:    ['Gaziantep', 'Diyarbakır', 'Şanlıurfa', 'Mardin', 'Batman', 'Şırnak', 'Siirt', 'Adıyaman', 'Kilis'],
+}
 
-function WarmLeadSideCard({
+const BOLGE_LABELS: Record<string, string> = {
+  all:          'Tüm Türkiye',
+  marmara:      'Marmara',
+  ege:          'Ege',
+  akdeniz:      'Akdeniz',
+  ic_anadolu:   'İç Anadolu',
+  karadeniz:    'Karadeniz',
+  dogu_anadolu: 'Doğu Anadolu',
+  guneydogu:    'Güneydoğu Anadolu',
+}
+
+// ─── Sıcak Lead Liste Kartı ───────────────────────────────────────────────────
+
+function WarmLeadListCard({
   lead,
-  onSelect,
+  onAnalyze,
   analyzing,
 }: {
-  lead:      WarmLead
-  onSelect:  (lead: WarmLead) => void
+  lead:     WarmLead
+  onAnalyze:(lead: WarmLead) => void
   analyzing: boolean
 }) {
   const src = WL_SOURCE_LABEL[lead.source] ?? WL_SOURCE_LABEL.kariyer
   return (
-    <div className="bg-white/[0.03] hover:bg-white/[0.06] border border-white/[0.06] hover:border-white/[0.11] rounded-xl p-3 transition-colors">
-      <div className="flex items-center gap-1.5 mb-1.5 flex-wrap">
-        <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full border ${src.cls}`}>
-          {src.label}
-        </span>
-        {lead.city && (
-          <span className="text-[9px] text-zinc-600 truncate">
-            {lead.city.split(',')[0].trim()}
+    <div className="bg-[#1c1c22] border border-white/[0.10] rounded-2xl p-4 flex items-start gap-4">
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 flex-wrap mb-1">
+          <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full border ${src.cls}`}>
+            {src.label}
           </span>
+          {lead.city && (
+            <span className="text-[10px] text-zinc-600">{lead.city}</span>
+          )}
+        </div>
+        <p className="text-sm font-bold text-white truncate">{lead.company_name}</p>
+        <p className="text-xs text-zinc-500 mt-0.5">{lead.job_title}</p>
+        {lead.snippet && (
+          <p className="text-[10px] text-zinc-700 mt-1.5 line-clamp-2 leading-relaxed">
+            {lead.snippet}
+          </p>
         )}
       </div>
-      <p className="text-[11px] font-semibold text-white leading-tight truncate mb-0.5">
-        {lead.company_name}
-      </p>
-      <p className="text-[10px] text-zinc-500 truncate mb-2.5">
-        {lead.job_title}
-      </p>
-      <button
-        onClick={() => onSelect(lead)}
-        disabled={analyzing}
-        className="w-full text-[10px] font-bold text-blue-400 hover:text-white bg-blue-500/10 hover:bg-blue-600 rounded-lg py-1.5 transition-colors border border-blue-500/20 hover:border-transparent disabled:opacity-40 disabled:cursor-not-allowed"
-      >
-        {analyzing ? '…' : 'Analiz Et →'}
-      </button>
+      <div className="flex flex-col gap-2 shrink-0">
+        <button
+          onClick={() => onAnalyze(lead)}
+          disabled={analyzing}
+          className="text-[11px] font-bold bg-blue-600 hover:bg-blue-500 text-white rounded-xl px-4 py-2 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          {analyzing ? '…' : 'Analiz Et →'}
+        </button>
+        <a
+          href={lead.job_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-[10px] text-center text-zinc-600 hover:text-zinc-400 border border-white/[0.08] rounded-xl px-3 py-1.5 transition-colors"
+        >
+          İlan ↗
+        </a>
+      </div>
     </div>
   )
 }
@@ -1404,7 +1437,7 @@ const labelCls  = 'block text-[10px] text-zinc-500 uppercase tracking-widest mb-
 function AnalizContent() {
   const searchParams   = useSearchParams()
   const fromWarmLead   = !!searchParams.get('businessName')
-  const [searchMode, setSearchMode]         = useState<'bulk' | 'single'>(
+  const [searchMode, setSearchMode]         = useState<'bulk' | 'single' | 'sicak'>(
     fromWarmLead ? 'single' : 'bulk'
   )
   const [businessQuery, setBusinessQuery]   = useState(searchParams.get('businessName') ?? '')
@@ -1453,10 +1486,12 @@ function AnalizContent() {
   const [savingSearch, setSavingSearch]         = useState(false)
   const [isLoggedIn, setIsLoggedIn]             = useState(false)
 
-  // ── Sıcak Leadler panel state ──────────────────────────────────────────────
+  // ── Sıcak Leadler mod state ────────────────────────────────────────────────
   const [warmLeads, setWarmLeads]             = useState<WarmLead[]>([])
   const [warmLeadsLoading, setWarmLeadsLoading] = useState(false)
-  const [warmLeadLimit, setWarmLeadLimit]     = useState(25)
+  const [warmLeadLimit, setWarmLeadLimit]     = useState(10)
+  const [warmRegion, setWarmRegion]           = useState<string>('all')
+  const [warmSearchDone, setWarmSearchDone]   = useState(false)
 
   const supabase = createClient()
 
@@ -1482,30 +1517,9 @@ function AnalizContent() {
     })
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Sıcak lead yükleyici ──────────────────────────────────────────────────
-  const loadWarmLeads = useCallback(async () => {
-    setWarmLeadsLoading(true)
-    try {
-      const { data } = await supabase
-        .from('warm_leads')
-        .select('*')
-        .eq('is_seen', false)
-        .order('created_at', { ascending: false })
-        .limit(warmLeadLimit)
-      setWarmLeads((data as WarmLead[]) ?? [])
-    } finally {
-      setWarmLeadsLoading(false)
-    }
-  }, [warmLeadLimit]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    if (isLoggedIn) loadWarmLeads()
-  }, [isLoggedIn, warmLeadLimit]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  // ── Sıcak lead seçince direkt analiz başlat ──────────────────────────────
-  async function handleWarmLeadSelect(lead: WarmLead) {
+  // ── Sıcak lead kartından analiz başlat ───────────────────────────────────
+  async function handleWarmLeadAnalyze(lead: WarmLead) {
     if (loading) return
-    setSearchMode('single')
     setBusinessQuery(lead.company_name)
     const cityIl = lead.city?.split(',').map(s => s.trim()).find(s => ILLER.includes(s)) ?? ''
     setSelectedIl(cityIl)
@@ -1524,6 +1538,30 @@ function AnalizContent() {
       setError('Beklenmeyen bir hata oluştu.')
     } finally {
       setLoading(false)
+    }
+  }
+
+  // ── Sıcak lead arama (Supabase'den filtreli çek) ──────────────────────────
+  async function fetchWarmLeads() {
+    setWarmLeadsLoading(true)
+    setWarmSearchDone(false)
+    setWarmLeads([])
+    try {
+      // Fazla çek, client-side bölge filtresi uygula
+      const { data } = await supabase
+        .from('warm_leads')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(500)
+      const all = (data as WarmLead[]) ?? []
+      const regionCities = warmRegion === 'all' ? null : BOLGE_CITIES[warmRegion]
+      const filtered = regionCities
+        ? all.filter(l => regionCities.some(c => l.city?.toLowerCase().includes(c.toLowerCase())))
+        : all
+      setWarmLeads(filtered.slice(0, warmLeadLimit))
+      setWarmSearchDone(true)
+    } finally {
+      setWarmLeadsLoading(false)
     }
   }
 
@@ -1603,7 +1641,14 @@ function AnalizContent() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (loading) return
+    if (loading || warmLeadsLoading) return
+
+    // ── Sıcak Leadler modu ─────────────────────────────────────────────────
+    if (searchMode === 'sicak') {
+      await fetchWarmLeads()
+      return
+    }
+
     setLoading(true)
     setError(null)
     setLeads([])
@@ -1639,10 +1684,12 @@ function AnalizContent() {
   }
 
   const hasCity = selectedIl.length > 0 && selectedIlce.length > 0
-  const canSubmit = !loading && (
-    searchMode === 'single'
-      ? businessQuery.trim().length >= 2
-      : sector.trim().length > 0 && (hasCity || extraCities.length > 0)
+  const canSubmit = !loading && !warmLeadsLoading && (
+    searchMode === 'sicak'
+      ? true
+      : searchMode === 'single'
+        ? businessQuery.trim().length >= 2
+        : sector.trim().length > 0 && (hasCity || extraCities.length > 0)
   )
 
   // ── CRM handlers ──
@@ -1760,80 +1807,6 @@ function AnalizContent() {
     <div className="min-h-screen bg-[#111115] text-white">
       <Navbar />
 
-      {/* ── Sıcak Lead Sol Paneli ─────────────────────────────────────────── */}
-      <aside className="hidden lg:flex flex-col fixed top-14 bottom-0 left-0 w-72 bg-[#111115] border-r border-white/[0.08] z-10">
-
-        {/* Başlık */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-white/[0.08] shrink-0">
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-bold text-white">Sıcak Leadler</span>
-            {warmLeads.length > 0 && (
-              <span className="text-[9px] font-black bg-blue-600 text-white px-1.5 py-0.5 rounded-full">
-                {warmLeads.length}
-              </span>
-            )}
-          </div>
-          <button
-            onClick={loadWarmLeads}
-            disabled={warmLeadsLoading}
-            title="Yenile"
-            className="text-sm text-zinc-600 hover:text-zinc-300 transition-colors disabled:opacity-40"
-          >
-            {warmLeadsLoading ? '…' : '↻'}
-          </button>
-        </div>
-
-        {/* Kaç lead göster */}
-        <div className="flex items-center gap-2 px-4 py-2 border-b border-white/[0.06] shrink-0">
-          <span className="text-[10px] text-zinc-600 shrink-0">Göster:</span>
-          <div className="flex gap-1">
-            {[10, 25, 50, 100].map(n => (
-              <button
-                key={n}
-                onClick={() => setWarmLeadLimit(n)}
-                className={`text-[10px] px-2 py-0.5 rounded-full font-semibold transition-colors ${
-                  warmLeadLimit === n
-                    ? 'bg-white/10 text-white'
-                    : 'text-zinc-600 hover:text-zinc-300'
-                }`}
-              >
-                {n}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Lead listesi */}
-        <div className="flex-1 overflow-y-auto px-3 py-3 space-y-2">
-          {warmLeadsLoading ? (
-            [...Array(4)].map((_, i) => (
-              <div key={i} className="h-28 bg-white/[0.03] border border-white/[0.06] rounded-xl animate-pulse" />
-            ))
-          ) : !isLoggedIn ? (
-            <div className="text-center py-10">
-              <p className="text-[11px] text-zinc-600">Giriş yapınca</p>
-              <p className="text-[11px] text-zinc-600">sıcak leadler burada görünür</p>
-            </div>
-          ) : warmLeads.length === 0 ? (
-            <div className="text-center py-10">
-              <p className="text-[11px] text-zinc-600">Henüz sıcak lead yok</p>
-              <p className="text-[10px] text-zinc-700 mt-1">Her gün 07:00&apos;de güncellenir</p>
-            </div>
-          ) : (
-            warmLeads.map(lead => (
-              <WarmLeadSideCard
-                key={lead.id}
-                lead={lead}
-                onSelect={handleWarmLeadSelect}
-                analyzing={loading}
-              />
-            ))
-          )}
-        </div>
-      </aside>
-
-      {/* ── Ana içerik ───────────────────────────────────────────────────────── */}
-      <div className="lg:ml-72">
       <div className="max-w-2xl mx-auto px-4 pt-14 pb-12">
 
         {/* Hero */}
@@ -1885,7 +1858,7 @@ function AnalizContent() {
         <form onSubmit={handleSubmit} className="bg-[#1c1c22] border border-white/[0.12] rounded-2xl p-5 shadow-2xl shadow-black/40 space-y-4">
 
           {/* Mod toggle */}
-          <div className="flex rounded-xl bg-white/[0.08] p-1">
+          <div className="flex rounded-xl bg-white/[0.08] p-1 gap-0.5">
             <button
               type="button"
               onClick={() => setSearchMode('bulk')}
@@ -1904,101 +1877,150 @@ function AnalizContent() {
             >
               İşletme Ara
             </button>
+            <button
+              type="button"
+              onClick={() => setSearchMode('sicak')}
+              className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                searchMode === 'sicak'
+                  ? 'bg-orange-500/20 text-orange-300 shadow-sm'
+                  : 'text-zinc-500 hover:text-zinc-300'
+              }`}
+            >
+              Sıcak Lead
+            </button>
           </div>
 
-          {/* ── Sektör + hızlı chip'ler ── */}
-          <div>
-            <label className={labelCls}>Sektör</label>
-            <div className="flex flex-wrap gap-1.5 mb-2">
-              {POPULAR_SECTORS.map(ps => (
-                <button
-                  key={ps.search}
-                  type="button"
-                  onClick={() => setSector(ps.search)}
-                  className={`text-[11px] px-2.5 py-1 rounded-full border font-medium transition-colors ${
-                    sector === ps.search
-                      ? 'bg-blue-500/20 border-blue-500/40 text-blue-300'
-                      : 'bg-white/[0.04] border-white/[0.08] text-zinc-500 hover:text-zinc-300 hover:border-white/20'
-                  }`}
-                >
-                  {ps.label}
-                </button>
-              ))}
-            </div>
-            <SectorAutocomplete value={sector} onChange={setSector} />
-          </div>
-
-          {/* ── Bölge Tara: şehir autocomplete ── */}
-          {searchMode === 'bulk' && (
-            <div>
-              <label className={labelCls}>İlçe / Şehir</label>
-
-              {/* Seçili ilçe chip'leri */}
-              {extraCities.length > 0 && (
-                <div className="flex flex-wrap gap-1.5 mb-2">
-                  {extraCities.map((c, i) => (
-                    <span key={i} className="flex items-center gap-1 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-full px-2.5 py-0.5 text-xs font-semibold">
-                      {c.ilce}, {c.il}
-                      <button type="button" onClick={() => removeExtraCity(i)} className="ml-0.5 text-blue-400/60 hover:text-blue-300 leading-none">×</button>
-                    </span>
-                  ))}
-                </div>
-              )}
-
-              <div className="flex gap-2">
-                <div className="flex-1">
-                  <CityAutocomplete
-                    value={cityDisplayValue}
-                    onChange={(il, ilce) => {
-                      handleCityChange(il, ilce)
-                      setCityDisplayValue(il && ilce ? `${ilce}, ${il}` : '')
-                    }}
-                  />
-                </div>
-                {hasCity && (
-                  <button
-                    type="button"
-                    onClick={addCurrentCity}
-                    title="Bu ilçeyi ekle ve yeni ilçe seç"
-                    className="shrink-0 px-3 py-2 rounded-xl bg-white/[0.07] border border-white/[0.12] text-zinc-400 hover:text-white hover:bg-white/[0.12] text-sm transition-colors"
-                  >
-                    +
-                  </button>
-                )}
-              </div>
-              {hasCity && (
-                <p className="text-[11px] text-zinc-600 mt-1.5">
-                  Seçildi: <span className="text-zinc-400">{selectedIlce}, {selectedIl}</span>
-                  {extraCities.length === 0 && <span className="ml-1 text-zinc-700">— + ile birden fazla ilçe ekleyin</span>}
-                </p>
-              )}
-            </div>
-          )}
-
-          {/* ── İşletme Ara: işletme adı + şehir ── */}
-          {searchMode === 'single' && (
+          {/* ── Sıcak Lead modu ── */}
+          {searchMode === 'sicak' && (
             <>
               <div>
-                <label className={labelCls}>İşletme Adı</label>
-                <input
-                  type="text"
-                  placeholder="Kafe Luna, Dr. Ahmet Yıldız…"
-                  value={businessQuery}
-                  onChange={e => setBusinessQuery(e.target.value)}
-                  className={inputCls}
-                />
-              </div>
-              <div>
-                <label className={labelCls}>Şehir (opsiyonel)</label>
+                <label className={labelCls}>Bölge</label>
                 <select
-                  value={selectedIl}
-                  onChange={e => setSelectedIl(e.target.value)}
+                  value={warmRegion}
+                  onChange={e => setWarmRegion(e.target.value)}
                   className={selectCls}
                 >
-                  <option value="">Şehir seçin</option>
-                  {ILLER.map(il => <option key={il} value={il}>{il}</option>)}
+                  {Object.entries(BOLGE_LABELS).map(([key, label]) => (
+                    <option key={key} value={key}>{label}</option>
+                  ))}
                 </select>
               </div>
+              <div>
+                <label className={labelCls}>Kaç işletme listelensin</label>
+                <div className="flex gap-2">
+                  {[10, 25, 50, 100].map(n => (
+                    <button
+                      key={n}
+                      type="button"
+                      onClick={() => setWarmLeadLimit(n)}
+                      className={`flex-1 py-2 rounded-xl text-sm font-bold border transition-colors ${
+                        warmLeadLimit === n
+                          ? 'bg-orange-500/20 border-orange-500/40 text-orange-300'
+                          : 'bg-white/[0.04] border-white/[0.08] text-zinc-500 hover:text-zinc-200 hover:border-white/20'
+                      }`}
+                    >
+                      {n}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* ── Sektör + şehir alanları (bulk/single modda göster) ── */}
+          {searchMode !== 'sicak' && (
+            <>
+              <div>
+                <label className={labelCls}>Sektör</label>
+                <div className="flex flex-wrap gap-1.5 mb-2">
+                  {POPULAR_SECTORS.map(ps => (
+                    <button
+                      key={ps.search}
+                      type="button"
+                      onClick={() => setSector(ps.search)}
+                      className={`text-[11px] px-2.5 py-1 rounded-full border font-medium transition-colors ${
+                        sector === ps.search
+                          ? 'bg-blue-500/20 border-blue-500/40 text-blue-300'
+                          : 'bg-white/[0.04] border-white/[0.08] text-zinc-500 hover:text-zinc-300 hover:border-white/20'
+                      }`}
+                    >
+                      {ps.label}
+                    </button>
+                  ))}
+                </div>
+                <SectorAutocomplete value={sector} onChange={setSector} />
+              </div>
+
+              {/* ── Bölge Tara: şehir autocomplete ── */}
+              {searchMode === 'bulk' && (
+                <div>
+                  <label className={labelCls}>İlçe / Şehir</label>
+                  {extraCities.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mb-2">
+                      {extraCities.map((c, i) => (
+                        <span key={i} className="flex items-center gap-1 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-full px-2.5 py-0.5 text-xs font-semibold">
+                          {c.ilce}, {c.il}
+                          <button type="button" onClick={() => removeExtraCity(i)} className="ml-0.5 text-blue-400/60 hover:text-blue-300 leading-none">×</button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  <div className="flex gap-2">
+                    <div className="flex-1">
+                      <CityAutocomplete
+                        value={cityDisplayValue}
+                        onChange={(il, ilce) => {
+                          handleCityChange(il, ilce)
+                          setCityDisplayValue(il && ilce ? `${ilce}, ${il}` : '')
+                        }}
+                      />
+                    </div>
+                    {hasCity && (
+                      <button
+                        type="button"
+                        onClick={addCurrentCity}
+                        title="Bu ilçeyi ekle ve yeni ilçe seç"
+                        className="shrink-0 px-3 py-2 rounded-xl bg-white/[0.07] border border-white/[0.12] text-zinc-400 hover:text-white hover:bg-white/[0.12] text-sm transition-colors"
+                      >
+                        +
+                      </button>
+                    )}
+                  </div>
+                  {hasCity && (
+                    <p className="text-[11px] text-zinc-600 mt-1.5">
+                      Seçildi: <span className="text-zinc-400">{selectedIlce}, {selectedIl}</span>
+                      {extraCities.length === 0 && <span className="ml-1 text-zinc-700">— + ile birden fazla ilçe ekleyin</span>}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* ── İşletme Ara: işletme adı + şehir ── */}
+              {searchMode === 'single' && (
+                <>
+                  <div>
+                    <label className={labelCls}>İşletme Adı</label>
+                    <input
+                      type="text"
+                      placeholder="Kafe Luna, Dr. Ahmet Yıldız…"
+                      value={businessQuery}
+                      onChange={e => setBusinessQuery(e.target.value)}
+                      className={inputCls}
+                    />
+                  </div>
+                  <div>
+                    <label className={labelCls}>Şehir (opsiyonel)</label>
+                    <select
+                      value={selectedIl}
+                      onChange={e => setSelectedIl(e.target.value)}
+                      className={selectCls}
+                    >
+                      <option value="">Şehir seçin</option>
+                      {ILLER.map(il => <option key={il} value={il}>{il}</option>)}
+                    </select>
+                  </div>
+                </>
+              )}
             </>
           )}
 
@@ -2006,16 +2028,63 @@ function AnalizContent() {
           <button
             type="submit"
             disabled={!canSubmit}
-            className={`w-full bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl py-3 text-sm transition-colors ${
-              !canSubmit ? 'opacity-25 cursor-not-allowed' : ''
-            }`}
+            className={`w-full font-bold rounded-xl py-3 text-sm transition-colors ${
+              searchMode === 'sicak'
+                ? 'bg-orange-600 hover:bg-orange-500 text-white'
+                : 'bg-blue-600 hover:bg-blue-500 text-white'
+            } ${!canSubmit ? 'opacity-25 cursor-not-allowed' : ''}`}
           >
-            {loading ? 'Analiz ediliyor…' : 'Analiz Et →'}
+            {warmLeadsLoading
+              ? 'Yükleniyor…'
+              : loading
+                ? 'Analiz ediliyor…'
+                : searchMode === 'sicak'
+                  ? `${BOLGE_LABELS[warmRegion]} — ${warmLeadLimit} Lead Getir →`
+                  : 'Analiz Et →'
+            }
           </button>
         </form>
 
+        {/* ── Sıcak Lead sonuçları ───────────────────────────────────────────── */}
+        {searchMode === 'sicak' && warmSearchDone && (
+          <div className="mt-6">
+            <div className="flex items-center justify-between mb-4">
+              <p className="text-sm text-zinc-400">
+                <span className="text-white font-semibold">{warmLeads.length} sıcak lead</span>
+                {warmRegion !== 'all' && <span className="text-zinc-600"> · {BOLGE_LABELS[warmRegion]}</span>}
+              </p>
+              <p className="text-[10px] text-zinc-700">
+                Dijital pazarlama uzmanı arayan şirketler
+              </p>
+            </div>
+            {warmLeadsLoading ? (
+              <div className="space-y-3">
+                {[...Array(3)].map((_, i) => (
+                  <div key={i} className="h-28 bg-white/[0.03] border border-white/[0.06] rounded-2xl animate-pulse" />
+                ))}
+              </div>
+            ) : warmLeads.length === 0 ? (
+              <div className="rounded-xl border border-white/[0.07] bg-white/[0.02] px-5 py-10 text-center">
+                <p className="text-zinc-500 text-sm">Bu bölgede kayıtlı sıcak lead yok.</p>
+                <p className="text-zinc-600 text-xs mt-1">Cron her gün 07:00&apos;de çalışır ve yeni ilanları ekler.</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {warmLeads.map(lead => (
+                  <WarmLeadListCard
+                    key={lead.id}
+                    lead={lead}
+                    onAnalyze={handleWarmLeadAnalyze}
+                    analyzing={loading}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* İlk lead gelmeden tam ekran loader */}
-        {loading && !searched && (
+        {loading && !searched && searchMode !== 'sicak' && (
           <>
             <ProgressLoader step={loadingStep} />
             <div className="space-y-4 mt-2 opacity-60">
@@ -2027,7 +2096,7 @@ function AnalizContent() {
         )}
 
         {/* Lead'ler gelirken kartların üstünde ince ilerleme çubuğu */}
-        {loading && searched && (
+        {loading && searched && searchMode !== 'sicak' && (
           <div className="flex items-center gap-2.5 py-2 px-1 text-xs text-zinc-500">
             <span className="w-3 h-3 border-2 border-zinc-700 border-t-zinc-400 rounded-full animate-spin shrink-0" />
             <span>{loadedCount} işletme analiz edildi, devam ediyor…</span>
@@ -2191,7 +2260,6 @@ function AnalizContent() {
         )}
 
       </div>
-      </div>{/* /lg:ml-72 */}
     </div>
   )
 }
