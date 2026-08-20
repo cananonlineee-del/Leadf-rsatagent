@@ -16,6 +16,67 @@ import {
 import { generateLeadPDF } from '../../lib/pdf'
 import { createClient } from '../../lib/supabase/client'
 
+// ─── Sıcak Lead tipleri ───────────────────────────────────────────────────────
+
+interface WarmLead {
+  id:           string
+  source:       'kariyer' | 'jooble'
+  company_name: string
+  job_title:    string
+  city:         string | null
+  posted_at:    string | null
+  job_url:      string
+  snippet:      string | null
+  is_seen:      boolean
+  created_at:   string
+}
+
+const WL_SOURCE_LABEL: Record<string, { label: string; cls: string }> = {
+  kariyer: { label: 'Kariyer.net', cls: 'bg-blue-500/15 text-blue-400 border-blue-500/20' },
+  jooble:  { label: 'Jooble TR',   cls: 'bg-violet-500/15 text-violet-400 border-violet-500/20' },
+}
+
+// ─── Sıcak Lead Yan Panel Kartı ───────────────────────────────────────────────
+
+function WarmLeadSideCard({
+  lead,
+  onSelect,
+  analyzing,
+}: {
+  lead:      WarmLead
+  onSelect:  (lead: WarmLead) => void
+  analyzing: boolean
+}) {
+  const src = WL_SOURCE_LABEL[lead.source] ?? WL_SOURCE_LABEL.kariyer
+  return (
+    <div className="bg-white/[0.03] hover:bg-white/[0.06] border border-white/[0.06] hover:border-white/[0.11] rounded-xl p-3 transition-colors">
+      <div className="flex items-center gap-1.5 mb-1.5 flex-wrap">
+        <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full border ${src.cls}`}>
+          {src.label}
+        </span>
+        {lead.city && (
+          <span className="text-[9px] text-zinc-600 truncate">
+            {lead.city.split(',')[0].trim()}
+          </span>
+        )}
+      </div>
+      <p className="text-[11px] font-semibold text-white leading-tight truncate mb-0.5">
+        {lead.company_name}
+      </p>
+      <p className="text-[10px] text-zinc-500 truncate mb-2.5">
+        {lead.job_title}
+      </p>
+      <button
+        onClick={() => onSelect(lead)}
+        disabled={analyzing}
+        className="w-full text-[10px] font-bold text-blue-400 hover:text-white bg-blue-500/10 hover:bg-blue-600 rounded-lg py-1.5 transition-colors border border-blue-500/20 hover:border-transparent disabled:opacity-40 disabled:cursor-not-allowed"
+      >
+        {analyzing ? '…' : 'Analiz Et →'}
+      </button>
+    </div>
+  )
+}
+
 // ─── Yardımcı fonksiyonlar ────────────────────────────────────────────────────
 
 function safeHostname(url: string): string {
@@ -1392,6 +1453,11 @@ function AnalizContent() {
   const [savingSearch, setSavingSearch]         = useState(false)
   const [isLoggedIn, setIsLoggedIn]             = useState(false)
 
+  // ── Sıcak Leadler panel state ──────────────────────────────────────────────
+  const [warmLeads, setWarmLeads]             = useState<WarmLead[]>([])
+  const [warmLeadsLoading, setWarmLeadsLoading] = useState(false)
+  const [warmLeadLimit, setWarmLeadLimit]     = useState(25)
+
   const supabase = createClient()
 
   // ── Sıcak lead'den gelince otomatik analiz başlat ──
@@ -1415,6 +1481,51 @@ function AnalizContent() {
       }
     })
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Sıcak lead yükleyici ──────────────────────────────────────────────────
+  const loadWarmLeads = useCallback(async () => {
+    setWarmLeadsLoading(true)
+    try {
+      const { data } = await supabase
+        .from('warm_leads')
+        .select('*')
+        .eq('is_seen', false)
+        .order('created_at', { ascending: false })
+        .limit(warmLeadLimit)
+      setWarmLeads((data as WarmLead[]) ?? [])
+    } finally {
+      setWarmLeadsLoading(false)
+    }
+  }, [warmLeadLimit]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (isLoggedIn) loadWarmLeads()
+  }, [isLoggedIn, warmLeadLimit]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Sıcak lead seçince direkt analiz başlat ──────────────────────────────
+  async function handleWarmLeadSelect(lead: WarmLead) {
+    if (loading) return
+    setSearchMode('single')
+    setBusinessQuery(lead.company_name)
+    const cityIl = lead.city?.split(',').map(s => s.trim()).find(s => ILLER.includes(s)) ?? ''
+    setSelectedIl(cityIl)
+    setLoading(true)
+    setError(null)
+    setLeads([])
+    setSearched(false)
+    setLoadedCount(0)
+    setFilter('all')
+    setCrmMap({})
+    const seen = new Set<string>()
+    try {
+      const url = `/api/analyze?businessName=${encodeURIComponent(lead.company_name)}${cityIl ? '&city=' + encodeURIComponent(cityIl) : ''}`
+      await readLeadStream(url, seen)
+    } catch {
+      setError('Beklenmeyen bir hata oluştu.')
+    } finally {
+      setLoading(false)
+    }
+  }
 
   // ── Aşamalı yükleniyor adımı ──
   useEffect(() => {
@@ -1649,6 +1760,80 @@ function AnalizContent() {
     <div className="min-h-screen bg-[#111115] text-white">
       <Navbar />
 
+      {/* ── Sıcak Lead Sol Paneli ─────────────────────────────────────────── */}
+      <aside className="hidden lg:flex flex-col fixed top-14 bottom-0 left-0 w-72 bg-[#111115] border-r border-white/[0.08] z-10">
+
+        {/* Başlık */}
+        <div className="flex items-center justify-between px-4 py-3 border-b border-white/[0.08] shrink-0">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-bold text-white">Sıcak Leadler</span>
+            {warmLeads.length > 0 && (
+              <span className="text-[9px] font-black bg-blue-600 text-white px-1.5 py-0.5 rounded-full">
+                {warmLeads.length}
+              </span>
+            )}
+          </div>
+          <button
+            onClick={loadWarmLeads}
+            disabled={warmLeadsLoading}
+            title="Yenile"
+            className="text-sm text-zinc-600 hover:text-zinc-300 transition-colors disabled:opacity-40"
+          >
+            {warmLeadsLoading ? '…' : '↻'}
+          </button>
+        </div>
+
+        {/* Kaç lead göster */}
+        <div className="flex items-center gap-2 px-4 py-2 border-b border-white/[0.06] shrink-0">
+          <span className="text-[10px] text-zinc-600 shrink-0">Göster:</span>
+          <div className="flex gap-1">
+            {[10, 25, 50, 100].map(n => (
+              <button
+                key={n}
+                onClick={() => setWarmLeadLimit(n)}
+                className={`text-[10px] px-2 py-0.5 rounded-full font-semibold transition-colors ${
+                  warmLeadLimit === n
+                    ? 'bg-white/10 text-white'
+                    : 'text-zinc-600 hover:text-zinc-300'
+                }`}
+              >
+                {n}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Lead listesi */}
+        <div className="flex-1 overflow-y-auto px-3 py-3 space-y-2">
+          {warmLeadsLoading ? (
+            [...Array(4)].map((_, i) => (
+              <div key={i} className="h-28 bg-white/[0.03] border border-white/[0.06] rounded-xl animate-pulse" />
+            ))
+          ) : !isLoggedIn ? (
+            <div className="text-center py-10">
+              <p className="text-[11px] text-zinc-600">Giriş yapınca</p>
+              <p className="text-[11px] text-zinc-600">sıcak leadler burada görünür</p>
+            </div>
+          ) : warmLeads.length === 0 ? (
+            <div className="text-center py-10">
+              <p className="text-[11px] text-zinc-600">Henüz sıcak lead yok</p>
+              <p className="text-[10px] text-zinc-700 mt-1">Her gün 07:00&apos;de güncellenir</p>
+            </div>
+          ) : (
+            warmLeads.map(lead => (
+              <WarmLeadSideCard
+                key={lead.id}
+                lead={lead}
+                onSelect={handleWarmLeadSelect}
+                analyzing={loading}
+              />
+            ))
+          )}
+        </div>
+      </aside>
+
+      {/* ── Ana içerik ───────────────────────────────────────────────────────── */}
+      <div className="lg:ml-72">
       <div className="max-w-2xl mx-auto px-4 pt-14 pb-12">
 
         {/* Hero */}
@@ -2006,6 +2191,7 @@ function AnalizContent() {
         )}
 
       </div>
+      </div>{/* /lg:ml-72 */}
     </div>
   )
 }
