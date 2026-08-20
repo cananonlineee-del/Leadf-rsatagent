@@ -616,10 +616,11 @@ interface PageSpeedData {
  * Core Web Vitals verilerini tek seferde paralel olarak çeker.
  * Mevcut Google Maps API anahtarı kullanılır — ek maliyet yok.
  */
-async function fetchPageSpeedData(siteUrl: string, apiKey: string): Promise<PageSpeedData> {
+async function fetchPageSpeedData(siteUrl: string, _apiKey: string): Promise<PageSpeedData> {
+  // PageSpeed Insights API key gerektirmiyor; key varsa 403 (application restriction) riski
   const base =
     `https://www.googleapis.com/pagespeedonline/v5/runPagespeed` +
-    `?url=${encodeURIComponent(siteUrl)}&key=${apiKey}`
+    `?url=${encodeURIComponent(siteUrl)}`
 
   const mobileFields = [
     'lighthouseResult.categories.performance.score',
