@@ -59,15 +59,25 @@ const CORPORATE_PATTERN = /\b(holding|group\b|grubu|bank\b|banka\b|telekom\b|tek
 const LOCAL_BIZ_PATTERN = /kuaför|güzellik\s+merkez|spa\b|nail\b|epilasyon|dövme|piercing|estetik klinik|diş klinik|ağız.diş|fizyoterapi|psikolog|veteriner|optik\b|eczane|restoran|kafeterya|pastane|fırın|köfteci|kebap|pide\b|butik otel|pansiyon|tatil\s+köy|oto\s+servis|lastik\s+servis|araç\s+bakım|halı\s+yıkama|kuru temizleme|nakliye\s+firma|çiçekçi|kuyumcu|pet\s+shop|anaokulu|kreş\b|etüt\s+merkez|dil\s+kursu|sürücü\s+kursu|müzik\s+okul|sigorta\s+acentesi|muhasebe\s+bürosu|hukuk\s+bürosu/i
 
 /**
+ * Kabul edilen iş unvanları — dijital pazarlama ile doğrudan ilgili roller.
+ * Bu kalıpların HİÇBİRİNİ içermeyen iş unvanları kesinlikle filtrelenir.
+ */
+const RELEVANT_JOB_PATTERN = /dijital\s*pazarlama|sosyal\s*medya|social\s*media|\bseo\b|\bsem\b|arama\s*motoru|google\s*ads|google\s*reklam|performance\s*market|performans\s*pazarlama|içerik\s*uzman|content\s*market|web\s*tasarım|web\s*geliştir|reklam\s*uzman|medya\s*planlama|influencer|e[\s-]?ticaret\s*uzman|growth\s*hack|\bppc\b|\bcro\b|e[\s-]?mail\s*market|affiliate|brand\s*manager|marka\s*uzman|dijital\s*medya|dijital\s*reklam|online\s*pazarlama/i
+
+/**
  * Bir warm lead'in veritabanına eklenip eklenmeyeceğini belirler.
  *
  * Tutma mantığı (öncelik sırası):
+ * 0. İş unvanı dijital pazarlamayla alakasız (muhasebe, finans vb.) → KESİN FİLTRELE
  * 1. Şirket adı veya snippet'te yerel işletme sinyali → KESIN TUT
  * 2. Bilinen büyük marka bloklist eşleşmesi → FİLTRELE
  * 3. Kurumsal yapı sinyali → FİLTRELE
  * 4. Belirsiz → TUT (aşırı filtrelemeyi önle)
  */
 function shouldKeepLead(row: WarmLeadRow): boolean {
+  // 0. İş unvanı alakasız → kesinlikle çıkar (en yüksek öncelik)
+  if (!RELEVANT_JOB_PATTERN.test(row.job_title)) return false
+
   const nameLower = row.company_name.toLowerCase()
   const text = `${row.company_name} ${row.snippet ?? ''}`.toLowerCase()
 
