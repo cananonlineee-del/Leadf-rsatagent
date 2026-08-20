@@ -44,6 +44,16 @@ interface PlaceDetailsV1 {
 export interface SiteAnalysis {
   ssl: boolean
   mobileScore: number | null
+  /** Google PageSpeed masaüstü performans skoru (0-100) */
+  desktopScore: number | null
+  /** Lighthouse SEO skoru (0-100) — başlık, meta açıklama, canonical, hreflang vb. */
+  lighthouseSeoScore: number | null
+  /** Largest Contentful Paint — saniye cinsinden (≤2.5 iyi, ≤4 orta, >4 kötü) */
+  lcp: number | null
+  /** Cumulative Layout Shift — (≤0.1 iyi, ≤0.25 orta, >0.25 kötü) */
+  cls: number | null
+  /** Total Blocking Time — ms cinsinden (≤200 iyi, ≤600 orta, >600 kötü) */
+  tbt: number | null
   hasPixel: boolean
   /** Gerçek Google Ads dönüşüm/yeniden pazarlama kodu (AW-, googleadservices, Ad Manager) */
   hasGoogleAds: boolean
@@ -592,23 +602,76 @@ async function fetchSiteHtml(url: string): Promise<string> {
   }
 }
 
-async function fetchMobileScore(siteUrl: string, apiKey: string): Promise<number | null> {
+interface PageSpeedData {
+  mobileScore: number | null
+  desktopScore: number | null
+  lighthouseSeoScore: number | null
+  lcp: number | null   // saniye
+  cls: number | null   // 0-∞
+  tbt: number | null   // ms
+}
+
+/**
+ * Mobil + masaüstü PageSpeed skorlarını, Lighthouse SEO skorunu ve
+ * Core Web Vitals verilerini tek seferde paralel olarak çeker.
+ * Mevcut Google Maps API anahtarı kullanılır — ek maliyet yok.
+ */
+async function fetchPageSpeedData(siteUrl: string, apiKey: string): Promise<PageSpeedData> {
+  const base =
+    `https://www.googleapis.com/pagespeedonline/v5/runPagespeed` +
+    `?url=${encodeURIComponent(siteUrl)}&key=${apiKey}`
+
+  const mobileFields = [
+    'lighthouseResult.categories.performance.score',
+    'lighthouseResult.categories.seo.score',
+    'lighthouseResult.audits.largest-contentful-paint',
+    'lighthouseResult.audits.cumulative-layout-shift',
+    'lighthouseResult.audits.total-blocking-time',
+  ].join(',')
+
   const ctrl = new AbortController()
-  const timer = setTimeout(() => ctrl.abort(), 12_000)
+  const timer = setTimeout(() => ctrl.abort(), 18_000)
+
+  const empty: PageSpeedData = {
+    mobileScore: null, desktopScore: null,
+    lighthouseSeoScore: null, lcp: null, cls: null, tbt: null,
+  }
+
   try {
-    const endpoint =
-      `https://www.googleapis.com/pagespeedonline/v5/runPagespeed` +
-      `?url=${encodeURIComponent(siteUrl)}&strategy=mobile` +
-      `&fields=lighthouseResult.categories.performance.score&key=${apiKey}`
-    const res = await fetch(endpoint, { signal: ctrl.signal, cache: 'no-store' })
+    const [mRes, dRes] = await Promise.all([
+      fetch(`${base}&strategy=mobile&fields=${encodeURIComponent(mobileFields)}`,  { signal: ctrl.signal, cache: 'no-store' }),
+      fetch(`${base}&strategy=desktop&fields=lighthouseResult.categories.performance.score`, { signal: ctrl.signal, cache: 'no-store' }),
+    ])
     clearTimeout(timer)
-    if (!res.ok) return null
-    const data = await res.json()
-    const raw = data?.lighthouseResult?.categories?.performance?.score
-    return raw != null ? Math.round((raw as number) * 100) : null
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const md: any = mRes.ok ? await mRes.json() : {}
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const dd: any = dRes.ok ? await dRes.json() : {}
+
+    const lr = md?.lighthouseResult
+    const mobileScore = lr?.categories?.performance?.score != null
+      ? Math.round(lr.categories.performance.score * 100) : null
+    const lighthouseSeoScore = lr?.categories?.seo?.score != null
+      ? Math.round(lr.categories.seo.score * 100) : null
+    const lcpMs: number | null = lr?.audits?.['largest-contentful-paint']?.numericValue ?? null
+    const clsRaw: number | null = lr?.audits?.['cumulative-layout-shift']?.numericValue ?? null
+    const tbtRaw: number | null = lr?.audits?.['total-blocking-time']?.numericValue ?? null
+
+    const desktopScore = dd?.lighthouseResult?.categories?.performance?.score != null
+      ? Math.round(dd.lighthouseResult.categories.performance.score * 100) : null
+
+    return {
+      mobileScore,
+      desktopScore,
+      lighthouseSeoScore,
+      lcp: lcpMs !== null ? Math.round(lcpMs) / 1000 : null,      // ms → saniye
+      cls: clsRaw !== null ? Math.round(clsRaw * 100) / 100 : null, // 2 ondalık
+      tbt: tbtRaw !== null ? Math.round(tbtRaw) : null,             // ms
+    }
   } catch {
     clearTimeout(timer)
-    return null
+    return empty
   }
 }
 
@@ -636,10 +699,11 @@ function isRealWebsite(url: string): boolean {
 }
 
 async function analyzeSite(websiteUri: string, apiKey: string): Promise<SiteAnalysis> {
-  const [html, mobileScore] = await Promise.all([
+  const [html, pageSpeed] = await Promise.all([
     fetchSiteHtml(websiteUri),
-    fetchMobileScore(websiteUri, apiKey),
+    fetchPageSpeedData(websiteUri, apiKey),
   ])
+  const { mobileScore, desktopScore, lighthouseSeoScore, lcp, cls, tbt } = pageSpeed
   // SSL: URL https ile başlıyor VE sayfa HTML döndürdü (boş = sertifika hatası)
   const ssl = websiteUri.startsWith('https://') && html.length > 0
   const { emailAddress, hasCorpEmail } = extractEmailFromHtml(html)
@@ -657,6 +721,11 @@ async function analyzeSite(websiteUri: string, apiKey: string): Promise<SiteAnal
   return {
     ssl,
     mobileScore,
+    desktopScore,
+    lighthouseSeoScore,
+    lcp,
+    cls,
+    tbt,
     hasPixel: /fbevents\.js|connect\.facebook\.net\/[a-z_]+\/fbevents|fbq\s*\(['"](?:track|init|trackCustom)/.test(html),
     // Gerçek Google Ads: dönüşüm ID (AW-), Google Ad Manager (pubads), Ads piksel (googleadservices)
     hasGoogleAds: /googleadservices\.com|googletag\.pubads\(\)|["']AW-\d{6,}["']/.test(html),
@@ -1939,6 +2008,22 @@ function detectGaps(
       add(`Mobil performans kritik (${site.mobileScore}/100)`, wS * 3)
     else if (site.mobileScore !== null && site.mobileScore < 70)
       add(`Mobil performans zayıf (${site.mobileScore}/100)`, wS * 2)
+    // Masaüstü hız skoru
+    if (site.desktopScore !== null && site.desktopScore < 50)
+      add(`Masaüstü skor kritik (${site.desktopScore}/100) — kurumsal müşteriler bilgisayardan giriyor`, wS * 2)
+    else if (site.desktopScore !== null && site.desktopScore < 70)
+      add(`Masaüstü skor düşük (${site.desktopScore}/100)`, wS)
+    // LCP (en büyük içerik yüklenme süresi)
+    if (site.lcp !== null && site.lcp > 4)
+      add(`Sayfa çok yavaş açılıyor: en büyük içerik ${site.lcp.toFixed(1)} saniyede yükleniyor (LCP) — ziyaretçiler sayfayı terk ediyor`, wS * 3)
+    else if (site.lcp !== null && site.lcp > 2.5)
+      add(`Sayfa açılış hızı ortalama: LCP ${site.lcp.toFixed(1)}s — iyileştirme potansiyeli var`, wS)
+    // CLS (görsel stabilite)
+    if (site.cls !== null && site.cls > 0.25)
+      add(`Sayfa düzeni atlıyor (CLS: ${site.cls.toFixed(2)}) — kullanıcı yanlış yere tıklıyor, sepet/form kayıpları olabilir`, wS * 2)
+    // Lighthouse SEO skoru
+    if (site.lighthouseSeoScore !== null && site.lighthouseSeoScore < 70)
+      add(`Google SEO teknik skoru düşük (${site.lighthouseSeoScore}/100) — arama sıralaması olumsuz etkileniyor`, profile.seo * 2)
     if (!site.hasPixel && !site.hasGoogleAds)
       add(site.hasAnalytics ? 'Sitede Meta Pixel ve Google Ads kodu yok (yalnızca Analytics)' : 'Sitede reklam/dönüşüm takip kodu yok', profile.ads * 2)
     if (!site.hasSocialLinks) add('Sitede sosyal medya bağlantısı yok', profile.instagram)

@@ -74,6 +74,43 @@ function ScoreBar({ label, value, color }: { label: string; value: number; color
   )
 }
 
+// ─── PageSpeed renk yardımcıları ─────────────────────────────────────────────
+
+function perfColor(score: number | null): string {
+  if (score === null) return 'text-zinc-600'
+  if (score >= 70) return 'text-emerald-400'
+  if (score >= 50) return 'text-amber-400'
+  return 'text-red-400'
+}
+
+function seoLighthouseColor(score: number | null): string {
+  if (score === null) return 'text-zinc-600'
+  if (score >= 90) return 'text-emerald-400'
+  if (score >= 70) return 'text-amber-400'
+  return 'text-red-400'
+}
+
+function lcpColor(lcp: number | null): string {
+  if (lcp === null) return 'text-zinc-600'
+  if (lcp <= 2.5) return 'text-emerald-400'
+  if (lcp <= 4)   return 'text-amber-400'
+  return 'text-red-400'
+}
+
+function clsColor(cls: number | null): string {
+  if (cls === null) return 'text-zinc-600'
+  if (cls <= 0.1)  return 'text-emerald-400'
+  if (cls <= 0.25) return 'text-amber-400'
+  return 'text-red-400'
+}
+
+function tbtColor(tbt: number | null): string {
+  if (tbt === null) return 'text-zinc-600'
+  if (tbt <= 200)  return 'text-emerald-400'
+  if (tbt <= 600)  return 'text-amber-400'
+  return 'text-red-400'
+}
+
 // ─── Güven rozetleri ──────────────────────────────────────────────────────────
 
 function igBadge(confidence: InstagramData['confidence']): { label: string; cls: string } {
@@ -415,6 +452,9 @@ function LeadCard({
     !lead.website,
     _s && !_s.ssl,
     _s && _s.mobileScore !== null && _s.mobileScore < 70,
+    _s && _s.desktopScore !== null && _s.desktopScore < 70,
+    _s && _s.lcp !== null && _s.lcp > 2.5,
+    _s && _s.cls !== null && _s.cls > 0.25,
     _s && !_s.hasSocialLinks,
     _s && (_s.pageTitle === null || _s.pageTitle.length < 20),
     _s && !_s.hasMetaDesc,
@@ -790,6 +830,56 @@ function LeadCard({
                   {lead.website && <a href={lead.website} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline font-normal normal-case">{safeHostname(lead.website)}{lead.websiteSource === 'discovered' ? ' ↗︎' : ''}</a>}
                   {siteProblems.length > 0 && <span className="text-red-400">({siteProblems.length} sorun)</span>}
                 </h4>
+
+                {/* ── Hız & SEO Pano — her zaman göster ── */}
+                {s && (
+                  <div className="mb-4">
+                    {/* Performans + SEO skorları */}
+                    <div className="grid grid-cols-3 gap-2 mb-2">
+                      {[
+                        { label: 'Mobil',      value: s.mobileScore,          color: perfColor(s.mobileScore) },
+                        { label: 'Masaüstü',   value: s.desktopScore,         color: perfColor(s.desktopScore) },
+                        { label: 'SEO Skoru',  value: s.lighthouseSeoScore,   color: seoLighthouseColor(s.lighthouseSeoScore) },
+                      ].map(({ label, value, color }) => (
+                        <div key={label} className="bg-black/20 rounded-lg px-2 py-2 text-center">
+                          <div className="text-[9px] text-zinc-600 mb-0.5">{label}</div>
+                          <div className={`text-sm font-black ${color}`}>
+                            {value != null ? value : '—'}
+                          </div>
+                          <div className="text-[8px] text-zinc-700">/100</div>
+                        </div>
+                      ))}
+                    </div>
+                    {/* Core Web Vitals */}
+                    {(s.lcp != null || s.cls != null || s.tbt != null) && (
+                      <div className="grid grid-cols-3 gap-2">
+                        {s.lcp != null && (
+                          <div className="bg-black/20 rounded-lg px-2 py-2 text-center">
+                            <div className="text-[9px] text-zinc-600 mb-0.5">LCP</div>
+                            <div className={`text-sm font-black ${lcpColor(s.lcp)}`}>{s.lcp.toFixed(1)}s</div>
+                            <div className="text-[8px] text-zinc-700">{s.lcp <= 2.5 ? 'iyi' : s.lcp <= 4 ? 'orta' : 'yavaş'}</div>
+                          </div>
+                        )}
+                        {s.cls != null && (
+                          <div className="bg-black/20 rounded-lg px-2 py-2 text-center">
+                            <div className="text-[9px] text-zinc-600 mb-0.5">CLS</div>
+                            <div className={`text-sm font-black ${clsColor(s.cls)}`}>{s.cls.toFixed(2)}</div>
+                            <div className="text-[8px] text-zinc-700">{s.cls <= 0.1 ? 'iyi' : s.cls <= 0.25 ? 'orta' : 'kötü'}</div>
+                          </div>
+                        )}
+                        {s.tbt != null && (
+                          <div className="bg-black/20 rounded-lg px-2 py-2 text-center">
+                            <div className="text-[9px] text-zinc-600 mb-0.5">TBT</div>
+                            <div className={`text-sm font-black ${tbtColor(s.tbt)}`}>{s.tbt}ms</div>
+                            <div className="text-[8px] text-zinc-700">{s.tbt <= 200 ? 'iyi' : s.tbt <= 600 ? 'orta' : 'yavaş'}</div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* ── Sorun listesi ── */}
                 {siteProblems.length > 0 ? (
                   <dl className="space-y-2">{siteProblems}</dl>
                 ) : lead.siteAnalysis ? (
