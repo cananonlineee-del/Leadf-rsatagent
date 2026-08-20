@@ -622,16 +622,8 @@ async function fetchPageSpeedData(siteUrl: string, _apiKey: string): Promise<Pag
     `https://www.googleapis.com/pagespeedonline/v5/runPagespeed` +
     `?url=${encodeURIComponent(siteUrl)}${psKey ? `&key=${psKey}` : ''}`
 
-  const mobileFields = [
-    'lighthouseResult.categories.performance.score',
-    'lighthouseResult.categories.seo.score',
-    'lighthouseResult.audits.largest-contentful-paint',
-    'lighthouseResult.audits.cumulative-layout-shift',
-    'lighthouseResult.audits.total-blocking-time',
-  ].join(',')
-
   const ctrl = new AbortController()
-  const timer = setTimeout(() => ctrl.abort(), 28_000)   // 18→28s: PageSpeed API 15-25s sürer
+  const timer = setTimeout(() => ctrl.abort(), 28_000)
 
   const empty: PageSpeedData = {
     mobileScore: null, desktopScore: null,
@@ -640,8 +632,8 @@ async function fetchPageSpeedData(siteUrl: string, _apiKey: string): Promise<Pag
 
   try {
     const [mRes, dRes] = await Promise.all([
-      fetch(`${base}&strategy=mobile&fields=${encodeURIComponent(mobileFields)}`,  { signal: ctrl.signal, cache: 'no-store' }),
-      fetch(`${base}&strategy=desktop&fields=lighthouseResult.categories.performance.score`, { signal: ctrl.signal, cache: 'no-store' }),
+      fetch(`${base}&strategy=mobile`,  { signal: ctrl.signal, cache: 'no-store' }),
+      fetch(`${base}&strategy=desktop`, { signal: ctrl.signal, cache: 'no-store' }),
     ])
     clearTimeout(timer)
 
