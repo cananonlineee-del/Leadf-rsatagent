@@ -118,25 +118,60 @@ const APIFY_GOOGLE_SEARCH_ACTOR = 'apify~google-search-scraper'
 
 /** Kariyer.net başlığından şirket adı ve iş unvanını çıkarır.
  *
- * Yaygın formatlar:
- *   "İş Unvanı - Şirket Adı | kariyer.net"
- *   "Şirket Adı - İş Unvanı | kariyer.net"
+ * Desteklenen formatlar:
+ *   "Şirket Adı - Pozisyon | kariyer.net"
+ *   "Pozisyon - Şirket Adı | kariyer.net"
+ *   "DD.MM.YYYY - Şirket Pozisyon İş İlanı | kariyer.net"
+ *   "Şirket Pozisyon İş İlanı | kariyer.net"
  */
 function parseKariyerTitle(
   title:   string,
   keyword: string,
 ): { company: string; jobTitle: string } {
-  const cleaned = title.replace(/\s*\|?\s*kariyer\.net\s*$/i, '').trim()
-  const parts = cleaned.split(/\s*[-–]\s*/).map(p => p.trim()).filter(Boolean)
+  // 1. kariyer.net suffix'ini kaldır
+  let cleaned = title.replace(/\s*\|?\s*kariyer\.net\s*$/i, '').trim()
+
+  // 2. Tarih token'larını kaldır (DD.MM.YYYY formatı)
+  cleaned = cleaned
+    .replace(/\b\d{2}\.\d{2}\.\d{4}\b\s*[-–]?\s*/g, '')
+    .replace(/\s*[-–]\s*$/, '')
+    .trim()
+
+  // 3. Tire/em-dash ile ayır; tarih gibi görünen parçaları filtrele
+  const parts = cleaned
+    .split(/\s*[-–]\s*/)
+    .map(p => p.trim())
+    .filter(p => p && !/^\d{2}\.\d{2}\.\d{4}$/.test(p))
 
   if (parts.length >= 2) {
     const kwWord = keyword.split(' ')[0].toLowerCase()
-    // Keyword'ün ilk kelimesini içeren kısım iş unvanı, diğeri şirket
     if (parts[0].toLowerCase().includes(kwWord)) {
       return { jobTitle: parts[0], company: parts.slice(1).join(' - ') }
     }
     return { company: parts[0], jobTitle: parts.slice(1).join(' - ') }
   }
+
+  // 4. Tek parça: keyword'ün başlangıç noktasında böl
+  if (parts.length === 1) {
+    const txt      = parts[0]
+    const txtLower = txt.toLowerCase()
+    const kwWord   = keyword.split(' ')[0].toLowerCase()
+    const idx      = txtLower.indexOf(kwWord)
+
+    if (idx > 2) {
+      const company = txt.slice(0, idx).trim().replace(/[-–\s]+$/, '')
+      // "İş İlanı" suffixini temizle
+      const jobRaw  = txt.slice(idx).replace(/\s+[İi]ş\s+[İi]lan[ıi]\s*$/i, '').trim()
+      if (company.length >= 2) return { company, jobTitle: jobRaw || keyword }
+    }
+
+    // Son çare: "İş İlanı" suffix'ini kırp, tamamını şirket adı say
+    return {
+      company:  txt.replace(/\s+[İi]ş\s+[İi]lan[ıi]\s*$/i, '').trim(),
+      jobTitle: keyword,
+    }
+  }
+
   return { company: cleaned, jobTitle: keyword }
 }
 
