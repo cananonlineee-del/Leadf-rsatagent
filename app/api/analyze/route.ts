@@ -645,9 +645,13 @@ async function fetchPageSpeedData(siteUrl: string, apiKey: string): Promise<Page
     clearTimeout(timer)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const md: any = mRes.ok ? await mRes.json() : {}
+    let md: any = {}
+    if (mRes.ok) { md = await mRes.json() }
+    else { const t = await mRes.text(); console.error('[PageSpeed] mobile error', mRes.status, t.slice(0, 200)) }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const dd: any = dRes.ok ? await dRes.json() : {}
+    let dd: any = {}
+    if (dRes.ok) { dd = await dRes.json() }
+    else { const t = await dRes.text(); console.error('[PageSpeed] desktop error', dRes.status, t.slice(0, 200)) }
 
     const lr = md?.lighthouseResult
     const mobileScore = lr?.categories?.performance?.score != null
