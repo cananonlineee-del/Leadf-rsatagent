@@ -617,10 +617,10 @@ interface PageSpeedData {
  * Mevcut Google Maps API anahtarı kullanılır — ek maliyet yok.
  */
 async function fetchPageSpeedData(siteUrl: string, _apiKey: string): Promise<PageSpeedData> {
-  // PageSpeed Insights API key gerektirmiyor; key varsa 403 (application restriction) riski
+  const psKey = process.env.PAGESPEED_API_KEY ?? ''
   const base =
     `https://www.googleapis.com/pagespeedonline/v5/runPagespeed` +
-    `?url=${encodeURIComponent(siteUrl)}`
+    `?url=${encodeURIComponent(siteUrl)}${psKey ? `&key=${psKey}` : ''}`
 
   const mobileFields = [
     'lighthouseResult.categories.performance.score',
