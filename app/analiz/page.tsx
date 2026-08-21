@@ -1256,58 +1256,75 @@ function LeadCard({
 
           {/* Fırsat Analizi */}
           {activeTab === 'firsat' && <section className="px-5 py-4">
-            <h4 className="text-[10px] font-bold text-zinc-600 uppercase tracking-widest mb-3">Fırsat Analizi</h4>
-            <div className="space-y-3 mb-4">
-              <ScoreBar label="Ödeme Gücü"   value={lead.odemeGucu}   color="bg-blue-500" />
-              <ScoreBar label="Açık Şiddeti" value={lead.acikSiddeti} color="bg-orange-500" />
-            </div>
+            {lead.gaps.length === 0 ? (
+              <p className="text-xs text-zinc-500 text-center py-10">Belirgin dijital fırsat tespit edilmedi.</p>
+            ) : (() => {
+              const all = lead.gaps
+              const n = all.length
+              const highEnd = Math.ceil(n / 3)
+              const midEnd  = Math.ceil(2 * n / 3)
+              const high = all.slice(0, highEnd)
+              const mid  = all.slice(highEnd, midEnd)
+              const low  = all.slice(midEnd)
 
-            {/* Bölge Lideri Karşılaştırması */}
-            {lead.topCompetitor && (
-              <div className="mb-4">
-                <h5 className="text-[10px] font-bold text-zinc-600 uppercase tracking-widest mb-2">Bölge Lideri</h5>
-                <div className="bg-white/[0.04] border border-white/[0.08] rounded-xl p-3">
-                  <p className="text-xs font-semibold text-zinc-300 mb-2 truncate">{lead.topCompetitor.name}</p>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div className="bg-black/20 rounded-lg px-2.5 py-2">
-                      <div className="text-[10px] text-zinc-600 mb-0.5">Yorum (rakip)</div>
-                      <div className="text-sm font-bold text-red-400">{lead.topCompetitor.reviewCount.toLocaleString('tr-TR')}</div>
-                    </div>
-                    <div className="bg-black/20 rounded-lg px-2.5 py-2">
-                      <div className="text-[10px] text-zinc-600 mb-0.5">Yorum (bu işletme)</div>
-                      <div className="text-sm font-bold text-zinc-300">{lead.reviewCount.toLocaleString('tr-TR')}</div>
-                    </div>
+              const Tier = ({
+                label, dot, labelColor, cardBg, cardBorder, textColor, items,
+              }: {
+                label: string
+                dot: string
+                labelColor: string
+                cardBg: string
+                cardBorder: string
+                textColor: string
+                items: string[]
+              }) => items.length === 0 ? null : (
+                <div>
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className={`w-2 h-2 rounded-full shrink-0 ${dot}`} />
+                    <span className={`text-[10px] font-bold uppercase tracking-widest ${labelColor}`}>{label}</span>
                   </div>
-                  {lead.topCompetitor.reviewCount > lead.reviewCount && (
-                    <p className="text-[11px] text-amber-400 mt-2 leading-relaxed">
-                      Rakip <span className="font-bold">{(lead.topCompetitor.reviewCount / Math.max(lead.reviewCount, 1)).toFixed(1)}×</span> daha fazla yorumla görünürlükte öne geçiyor.
-                    </p>
-                  )}
+                  <div className="space-y-1.5">
+                    {items.map((gap, i) => (
+                      <div key={i} className={`${cardBg} border ${cardBorder} rounded-xl px-3.5 py-2.5`}>
+                        <p className={`text-xs leading-relaxed ${textColor}`}>{gap}</p>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            )}
+              )
 
-            {restGaps.length > 0 && (
-              <>
-                <h5 className="text-[10px] font-bold text-zinc-600 uppercase tracking-widest mb-2">Diğer Eksikler</h5>
-                <ul className="space-y-1.5">
-                  {(showAllGaps ? restGaps : restGaps.slice(0, 5)).map((gap, i) => (
-                    <li key={i} className="flex items-start gap-1.5 text-xs text-zinc-400">
-                      <span className="text-white/20 shrink-0 mt-px">▸</span>
-                      {gap}
-                    </li>
-                  ))}
-                </ul>
-                {restGaps.length > 5 && (
-                  <button
-                    onClick={() => setShowAllGaps(v => !v)}
-                    className="mt-2 text-xs text-blue-400 hover:text-blue-300 font-medium"
-                  >
-                    {showAllGaps ? '▲ Daha az göster' : `▼ +${restGaps.length - 5} daha göster`}
-                  </button>
-                )}
-              </>
-            )}
+              return (
+                <div className="space-y-5">
+                  <Tier
+                    label="En Büyük Fırsat"
+                    dot="bg-red-500"
+                    labelColor="text-red-400"
+                    cardBg="bg-red-500/[0.06]"
+                    cardBorder="border-red-500/20"
+                    textColor="text-zinc-200"
+                    items={high}
+                  />
+                  <Tier
+                    label="Orta Fırsat"
+                    dot="bg-amber-400"
+                    labelColor="text-amber-400"
+                    cardBg="bg-amber-400/[0.05]"
+                    cardBorder="border-amber-400/20"
+                    textColor="text-zinc-300"
+                    items={mid}
+                  />
+                  <Tier
+                    label="Düşük Öncelik"
+                    dot="bg-zinc-500"
+                    labelColor="text-zinc-500"
+                    cardBg="bg-white/[0.02]"
+                    cardBorder="border-white/[0.06]"
+                    textColor="text-zinc-400"
+                    items={low}
+                  />
+                </div>
+              )
+            })()}
           </section>}
           </div>
         </div>
