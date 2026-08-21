@@ -632,8 +632,8 @@ async function fetchPageSpeedData(siteUrl: string, _apiKey: string): Promise<Pag
 
   try {
     const [mRes, dRes] = await Promise.all([
-      fetch(`${base}&strategy=mobile`,  { signal: ctrl.signal, cache: 'no-store' }),
-      fetch(`${base}&strategy=desktop`, { signal: ctrl.signal, cache: 'no-store' }),
+      fetch(`${base}&strategy=mobile&category=performance&category=seo`,  { signal: ctrl.signal, cache: 'no-store' }),
+      fetch(`${base}&strategy=desktop&category=performance`, { signal: ctrl.signal, cache: 'no-store' }),
     ])
     clearTimeout(timer)
 
