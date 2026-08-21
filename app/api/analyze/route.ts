@@ -1114,6 +1114,100 @@ async function googleSearchInstagram(
   }
 }
 
+/**
+ * Fallback: site:instagram.com arama ile direkt Instagram sayfası bul.
+ * Ana arama başarısız olduğunda, Google'ın Instagram index'i üzerinden
+ * işletme adıyla doğrudan arama yapar — çok daha yüksek recall.
+ */
+async function googleSearchInstagramFallback(
+  businessName: string,
+  phone: string | null,
+  token: string,
+): Promise<InstagramData | null> {
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), 25_000)
+  try {
+    const res = await fetch(
+      `https://api.apify.com/v2/acts/${APIFY_GOOGLE_SEARCH_ACTOR}/run-sync-get-dataset-items?token=${token}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          queries: `site:instagram.com "${businessName}"`,
+          maxPagesPerQuery: 1,
+          resultsPerPage: 5,
+          countryCode: 'tr',
+          languageCode: 'tr',
+        }),
+        signal: ctrl.signal,
+        cache: 'no-store',
+      },
+    )
+    clearTimeout(timer)
+    if (!res.ok) return null
+
+    const raw: unknown[] = await res.json()
+    if (!Array.isArray(raw)) return null
+
+    interface SearchResult { url: string; title: string; description: string }
+    const results: SearchResult[] = []
+    for (const item of raw) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const cast = item as any
+      if (Array.isArray(cast.organicResults)) {
+        for (const r of cast.organicResults) results.push({ url: r.url ?? '', title: r.title ?? '', description: r.description ?? '' })
+      } else if (cast.url) {
+        results.push({ url: cast.url ?? '', title: cast.title ?? '', description: cast.description ?? '' })
+      }
+    }
+
+    console.log(`[IG FALLBACK] "${businessName}" site:instagram.com → ${results.length} results`)
+
+    const IG_URL_RE = /instagram\.com\/([a-zA-Z0-9._]{1,30})(?:\/|\?|#|$)/
+    const SYSTEM_PATHS = new Set(['p', 'reel', 'reels', 'explore', 'accounts', 'stories', 'tv', 'hashtag', 'ar', 'about', 'legal', 'help', 'press', 'login', 'signup', 'oauth', 'embed', 'features', 'business', 'creators', 'developer', 'download'])
+
+    for (const result of results) {
+      const m = IG_URL_RE.exec(result.url)
+      if (!m) continue
+      const handle = m[1]
+      if (SYSTEM_PATHS.has(handle.toLowerCase())) continue
+
+      // site:instagram.com arama zaten Instagram sayfalarını döndürür;
+      // doğrulama daha permissive — ilk sonuç en alakalı
+      const validation = validateGoogleSearchCandidate(handle, result.title, result.description, businessName, '', phone)
+      const confidence = validation?.confidence ?? 'possible'
+      const reason = validation?.reason ?? 'site:instagram.com aramasında ilk sonuç'
+
+      console.log(`[IG FALLBACK] @${handle} → confidence=${confidence}`)
+      const profile = await fetchInstagramProfile(handle, token, confidence, reason)
+      if (profile) return profile
+
+      // Profil çekilemedi → snippet verisi ile dön
+      return {
+        handle,
+        followersCount: parseFollowersFromSnippet(`${result.title} ${result.description}`),
+        postsCount: null,
+        bio: result.description || null,
+        lastPostDate: null,
+        isPrivate: false,
+        activity: 'unknown',
+        confidence,
+        confidenceReason: reason,
+        weeklyPostFreq: null,
+        usesReels: null,
+        engagementRate: null,
+        bioHasPhone: false,
+        bioHasUrl: false,
+        bioLength: null,
+      }
+    }
+    return null
+  } catch {
+    clearTimeout(timer)
+    return null
+  }
+}
+
 // ─── Apify — Instagram Profil (site linkinden bulunanlar için) ────────────────
 
 /**
@@ -2103,19 +2197,21 @@ function detectGaps(
   if (!hasOpeningHours)        add('Çalışma saatleri Google profilinde belirtilmemiş', wSeo)
 
   // ── Instagram ──
+  // 'possible' güven seviyeli hesaplar UI'da gösterilir ama gap mesajı üretilmez
   const wIg = profile.instagram
-  if (instagram?.activity === 'neglected') {
+  const igConfident = instagram?.confidence !== 'possible'
+  if (igConfident && instagram?.activity === 'neglected') {
     const days = instagram.lastPostDate ? daysSinceStr(instagram.lastPostDate) : 90
     add(`Instagram hesabı var ama ${days}+ gündür paylaşım yok`, wIg * 4)
-  } else if (instagram?.activity === 'dormant') {
+  } else if (igConfident && instagram?.activity === 'dormant') {
     add('Instagram hesabı son 30-90 günde güncellenmemiş', wIg * 2)
   }
   // Haftalık paylaşım sıklığı — düşükse extra sinyal
-  if (instagram?.weeklyPostFreq != null && instagram.weeklyPostFreq < 1 && instagram.activity === 'active') {
+  if (igConfident && instagram?.weeklyPostFreq != null && instagram.weeklyPostFreq < 1 && instagram.activity === 'active') {
     add(`Haftada ${instagram.weeklyPostFreq} paylaşım — içerik sıklığı artırılabilir`, wIg)
   }
   // Reels kullanmıyorsa (aktif hesap için)
-  if (instagram?.usesReels === false && instagram.activity !== 'neglected' && profile.instagram >= 3) {
+  if (igConfident && instagram?.usesReels === false && instagram.activity !== 'neglected' && profile.instagram >= 3) {
     add('Instagram Reels kullanılmıyor — erişim artırma fırsatı var', wIg)
   }
   // E-posta kurumsallığı (site varsa)
@@ -2160,7 +2256,7 @@ function detectGaps(
     add('Online rezervasyon/randevu sistemi tespit edilemedi', profile.website)
 
   // ── Instagram etkileşim oranı ──
-  if (instagram?.engagementRate != null && instagram.engagementRate < 1)
+  if (igConfident && instagram?.engagementRate != null && instagram.engagementRate < 1)
     add(`Instagram etkileşim oranı %${instagram.engagementRate.toFixed(1)} — takipçi kitlesi içerik ile bağ kuramıyor`, profile.instagram * 2)
 
   // ── Takipçi sayısı sinyalleri ──
@@ -2557,9 +2653,8 @@ function buildLead(
     }
   }
 
-  // ── Güven Eşiği Filtrelemesi: %80 altı güven → null ──────────────────────
-  // 'possible' Instagram (~%40 doğruluk): yanlış hesap riski çok yüksek, çıkarılır
-  if (instagram?.confidence === 'possible') instagram = null
+  // ── Güven Eşiği: 'possible' Instagram UI'da "Belirsiz" badge ile gösterilir ──
+  // Scoring ve gap detection'a dahil edilmez (computeGap/detectGaps zaten 'possible' checkli).
 
   // Facebook aktivite verisi yalnızca 'definitive' eşleşmede güvenilir
   // Snippet tabanlı eşleşmelerde (%30-40 doğruluk) aktivite/takipçi temizlenir
@@ -2792,6 +2887,7 @@ export async function GET(request: NextRequest) {
                   ? igHandleFromSite
                     ? fetchInstagramProfile(igHandleFromSite, apifyToken, 'definitive', 'Web sitesindeki linkten bulundu')
                     : googleSearchInstagram(c.name, city ?? '', details.nationalPhoneNumber ?? null, apifyToken)
+                        .then(r => r ?? googleSearchInstagramFallback(c.name, details.nationalPhoneNumber ?? null, apifyToken!))
                   : Promise.resolve(null),
                 // ── Facebook ──
                 apifyToken
