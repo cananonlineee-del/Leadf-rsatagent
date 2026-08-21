@@ -1033,7 +1033,10 @@ async function googleSearchInstagram(
       },
     )
     clearTimeout(timer)
-    if (!res.ok) return null
+    if (!res.ok) {
+      console.error(`[IG SEARCH] "${businessName}" HTTP ${res.status}`)
+      return null
+    }
 
     const raw: unknown[] = await res.json()
     if (!Array.isArray(raw)) return null
@@ -1108,8 +1111,9 @@ async function googleSearchInstagram(
     }
 
     return null // Hiçbir IG linki doğrulanamadı
-  } catch {
+  } catch (err) {
     clearTimeout(timer)
+    console.error(`[IG SEARCH] "${businessName}" catch:`, err instanceof Error ? err.message : err)
     return null
   }
 }
@@ -1432,8 +1436,9 @@ async function googleSearchFacebook(
       }
     }
     return null
-  } catch {
+  } catch (err) {
     clearTimeout(timer)
+    console.error(`[FB SEARCH] "${businessName}" catch:`, err instanceof Error ? err.message : err)
     return null
   }
 }
@@ -1592,8 +1597,9 @@ async function googleSearchTiktok(
       }
     }
     return null
-  } catch {
+  } catch (err) {
     clearTimeout(timer)
+    console.error(`[TT SEARCH] "${businessName}" catch:`, err instanceof Error ? err.message : err)
     return null
   }
 }
