@@ -829,7 +829,42 @@ function extractLastPostDate(posts: unknown[]): string | null {
 
 // ─── Instagram — Google Search ile Keşif ─────────────────────────────────────
 
-const APIFY_GOOGLE_SEARCH_ACTOR = 'apify~google-search-scraper'
+// ─── Google Custom Search API ─────────────────────────────────────────────────
+
+interface GSearchResult { url: string; title: string; description: string }
+
+/**
+ * Google Custom Search API üzerinden arama yapar.
+ * Apify Google Search Scraper'ın yerine — ücretsiz (günde 100 sorgu), ~5× daha hızlı.
+ * Requires: GOOGLE_CSE_KEY + GOOGLE_CSE_CX env vars.
+ */
+async function googleCSESearch(
+  query: string,
+  key: string,
+  cx: string,
+  num = 10,
+): Promise<GSearchResult[]> {
+  if (!key || !cx) return []
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), 10_000)
+  try {
+    const res = await fetch(
+      `https://www.googleapis.com/customsearch/v1?key=${encodeURIComponent(key)}&cx=${encodeURIComponent(cx)}&q=${encodeURIComponent(query)}&num=${Math.min(num, 10)}&gl=tr&hl=tr`,
+      { signal: ctrl.signal, cache: 'no-store' },
+    )
+    clearTimeout(timer)
+    if (!res.ok) {
+      console.error(`[CSE] "${query.slice(0, 60)}" HTTP ${res.status}`)
+      return []
+    }
+    const data = await res.json() as { items?: Array<{ title: string; link: string; snippet: string }> }
+    return (data.items ?? []).map(i => ({ url: i.link ?? '', title: i.title ?? '', description: i.snippet ?? '' }))
+  } catch (err) {
+    clearTimeout(timer)
+    console.error(`[CSE] "${query.slice(0, 60)}" catch:`, err instanceof Error ? err.message : err)
+    return []
+  }
+}
 
 /** Google Search snippet'inden yaklaşık beğeni/like sayısını ayrıştırmaya çalışır (Facebook) */
 function parseLikesFromSnippet(text: string): number | null {
@@ -1011,50 +1046,13 @@ async function googleSearchInstagram(
   businessName: string,
   cityQuery: string,
   phone: string | null,
-  token: string,
+  cseKey: string,
+  cseCx: string,
+  apifyToken: string | null,
 ): Promise<InstagramData | null> {
-  const ctrl = new AbortController()
-  const timer = setTimeout(() => ctrl.abort(), 25_000)
   try {
-    const res = await fetch(
-      `https://api.apify.com/v2/acts/${APIFY_GOOGLE_SEARCH_ACTOR}/run-sync-get-dataset-items?token=${token}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          queries: `${businessName} ${cityQuery} instagram`,
-          maxPagesPerQuery: 1,
-          resultsPerPage: 10,
-          countryCode: 'tr',
-          languageCode: 'tr',
-        }),
-        signal: ctrl.signal,
-        cache: 'no-store',
-      },
-    )
-    clearTimeout(timer)
-    if (!res.ok) {
-      console.error(`[IG SEARCH] "${businessName}" HTTP ${res.status}`)
-      return null
-    }
-
-    const raw: unknown[] = await res.json()
-    if (!Array.isArray(raw)) return null
-
-    // Organik sonuçları normalize et (nested VEYA flat format)
-    interface SearchResult { url: string; title: string; description: string }
-    const results: SearchResult[] = []
-    for (const item of raw) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const cast = item as any
-      if (Array.isArray(cast.organicResults)) {
-        for (const r of cast.organicResults) {
-          results.push({ url: r.url ?? '', title: r.title ?? '', description: r.description ?? '' })
-        }
-      } else if (cast.url) {
-        results.push({ url: cast.url ?? '', title: cast.title ?? '', description: cast.description ?? '' })
-      }
-    }
+    const results = await googleCSESearch(`${businessName} ${cityQuery} instagram`, cseKey, cseCx, 10)
+    if (results.length === 0) return null
 
     console.log(`[IG SEARCH] "${businessName}" → ${results.length} total results, ${results.filter(r => r.url.includes('instagram.com')).length} IG URLs`)
 
@@ -1083,7 +1081,9 @@ async function googleSearchInstagram(
 
       console.log(`[IG SEARCH] @${handle} validated (${validation.confidence}) — fetching profile for activity...`)
       // Handle bulundu; gerçek aktivite verisini almak için profil scraper'ı çağır
-      const profile = await fetchInstagramProfile(handle, token, validation.confidence, validation.reason)
+      const profile = apifyToken
+        ? await fetchInstagramProfile(handle, apifyToken, validation.confidence, validation.reason)
+        : null
       if (profile) {
         console.log(`[IG SEARCH] @${handle} profile fetched — activity=${profile.activity} lastPost=${profile.lastPostDate ?? 'null'}`)
         return profile
@@ -1112,7 +1112,6 @@ async function googleSearchInstagram(
 
     return null // Hiçbir IG linki doğrulanamadı
   } catch (err) {
-    clearTimeout(timer)
     console.error(`[IG SEARCH] "${businessName}" catch:`, err instanceof Error ? err.message : err)
     return null
   }
@@ -1126,44 +1125,13 @@ async function googleSearchInstagram(
 async function googleSearchInstagramFallback(
   businessName: string,
   phone: string | null,
-  token: string,
+  cseKey: string,
+  cseCx: string,
+  apifyToken: string | null,
 ): Promise<InstagramData | null> {
-  const ctrl = new AbortController()
-  const timer = setTimeout(() => ctrl.abort(), 25_000)
   try {
-    const res = await fetch(
-      `https://api.apify.com/v2/acts/${APIFY_GOOGLE_SEARCH_ACTOR}/run-sync-get-dataset-items?token=${token}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          queries: `site:instagram.com "${businessName}"`,
-          maxPagesPerQuery: 1,
-          resultsPerPage: 5,
-          countryCode: 'tr',
-          languageCode: 'tr',
-        }),
-        signal: ctrl.signal,
-        cache: 'no-store',
-      },
-    )
-    clearTimeout(timer)
-    if (!res.ok) return null
-
-    const raw: unknown[] = await res.json()
-    if (!Array.isArray(raw)) return null
-
-    interface SearchResult { url: string; title: string; description: string }
-    const results: SearchResult[] = []
-    for (const item of raw) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const cast = item as any
-      if (Array.isArray(cast.organicResults)) {
-        for (const r of cast.organicResults) results.push({ url: r.url ?? '', title: r.title ?? '', description: r.description ?? '' })
-      } else if (cast.url) {
-        results.push({ url: cast.url ?? '', title: cast.title ?? '', description: cast.description ?? '' })
-      }
-    }
+    const results = await googleCSESearch(`site:instagram.com "${businessName}"`, cseKey, cseCx, 5)
+    if (results.length === 0) return null
 
     console.log(`[IG FALLBACK] "${businessName}" site:instagram.com → ${results.length} results`)
 
@@ -1183,7 +1151,9 @@ async function googleSearchInstagramFallback(
       const reason = validation?.reason ?? 'site:instagram.com aramasında ilk sonuç'
 
       console.log(`[IG FALLBACK] @${handle} → confidence=${confidence}`)
-      const profile = await fetchInstagramProfile(handle, token, confidence, reason)
+      const profile = apifyToken
+        ? await fetchInstagramProfile(handle, apifyToken, confidence, reason)
+        : null
       if (profile) return profile
 
       // Profil çekilemedi → snippet verisi ile dön
@@ -1207,7 +1177,6 @@ async function googleSearchInstagramFallback(
     }
     return null
   } catch {
-    clearTimeout(timer)
     return null
   }
 }
@@ -1354,45 +1323,12 @@ async function googleSearchFacebook(
   businessName: string,
   cityQuery: string,
   phone: string | null,
-  token: string,
+  cseKey: string,
+  cseCx: string,
 ): Promise<FacebookData | null> {
-  const ctrl = new AbortController()
-  const timer = setTimeout(() => ctrl.abort(), 25_000)
   try {
-    const res = await fetch(
-      `https://api.apify.com/v2/acts/${APIFY_GOOGLE_SEARCH_ACTOR}/run-sync-get-dataset-items?token=${token}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          queries: `${businessName} ${cityQuery} facebook`,
-          maxPagesPerQuery: 1,
-          resultsPerPage: 10,
-          countryCode: 'tr',
-          languageCode: 'tr',
-        }),
-        signal: ctrl.signal,
-        cache: 'no-store',
-      },
-    )
-    clearTimeout(timer)
-    if (!res.ok) return null
-    const raw: unknown[] = await res.json()
-    if (!Array.isArray(raw)) return null
-
-    interface SearchResult { url: string; title: string; description: string }
-    const results: SearchResult[] = []
-    for (const item of raw) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const cast = item as any
-      if (Array.isArray(cast.organicResults)) {
-        for (const r of cast.organicResults) {
-          results.push({ url: r.url ?? '', title: r.title ?? '', description: r.description ?? '' })
-        }
-      } else if (cast.url) {
-        results.push({ url: cast.url ?? '', title: cast.title ?? '', description: cast.description ?? '' })
-      }
-    }
+    const results = await googleCSESearch(`${businessName} ${cityQuery} facebook`, cseKey, cseCx, 10)
+    if (results.length === 0) return null
 
     const FB_URL_RE = /facebook\.com\/([a-zA-Z0-9._-]{3,80})(?:\/|\?|#|$)/
     const FB_SYSTEM = new Set([
@@ -1437,7 +1373,6 @@ async function googleSearchFacebook(
     }
     return null
   } catch (err) {
-    clearTimeout(timer)
     console.error(`[FB SEARCH] "${businessName}" catch:`, err instanceof Error ? err.message : err)
     return null
   }
@@ -1523,45 +1458,13 @@ async function googleSearchTiktok(
   businessName: string,
   cityQuery: string,
   phone: string | null,
-  token: string,
+  cseKey: string,
+  cseCx: string,
+  apifyToken: string | null,
 ): Promise<TikTokData | null> {
-  const ctrl = new AbortController()
-  const timer = setTimeout(() => ctrl.abort(), 25_000)
   try {
-    const res = await fetch(
-      `https://api.apify.com/v2/acts/${APIFY_GOOGLE_SEARCH_ACTOR}/run-sync-get-dataset-items?token=${token}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          queries: `${businessName} ${cityQuery} tiktok`,
-          maxPagesPerQuery: 1,
-          resultsPerPage: 10,
-          countryCode: 'tr',
-          languageCode: 'tr',
-        }),
-        signal: ctrl.signal,
-        cache: 'no-store',
-      },
-    )
-    clearTimeout(timer)
-    if (!res.ok) return null
-    const raw: unknown[] = await res.json()
-    if (!Array.isArray(raw)) return null
-
-    interface SearchResult { url: string; title: string; description: string }
-    const results: SearchResult[] = []
-    for (const item of raw) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const cast = item as any
-      if (Array.isArray(cast.organicResults)) {
-        for (const r of cast.organicResults) {
-          results.push({ url: r.url ?? '', title: r.title ?? '', description: r.description ?? '' })
-        }
-      } else if (cast.url) {
-        results.push({ url: cast.url ?? '', title: cast.title ?? '', description: cast.description ?? '' })
-      }
-    }
+    const results = await googleCSESearch(`${businessName} ${cityQuery} tiktok`, cseKey, cseCx, 10)
+    if (results.length === 0) return null
 
     console.log(`[TT SEARCH] "${businessName}" → ${results.length} total results, ${results.filter(r => r.url.includes('tiktok.com')).length} TT URLs`)
 
@@ -1581,7 +1484,9 @@ async function googleSearchTiktok(
       }
 
       console.log(`[TT SEARCH] @${handle} validated (${validation.confidence}) — fetching profile...`)
-      const profile = await fetchTiktokProfile(handle, token, validation.confidence, validation.reason)
+      const profile = apifyToken
+        ? await fetchTiktokProfile(handle, apifyToken, validation.confidence, validation.reason)
+        : null
       if (profile) return profile
 
       console.log(`[TT SEARCH] @${handle} profile fetch failed — returning snippet-only`)
@@ -1598,7 +1503,6 @@ async function googleSearchTiktok(
     }
     return null
   } catch (err) {
-    clearTimeout(timer)
     console.error(`[TT SEARCH] "${businessName}" catch:`, err instanceof Error ? err.message : err)
     return null
   }
@@ -1608,43 +1512,12 @@ async function googleSearchTiktok(
 async function googleSearchFacebookFallback(
   businessName: string,
   phone: string | null,
-  token: string,
+  cseKey: string,
+  cseCx: string,
 ): Promise<FacebookData | null> {
-  const ctrl = new AbortController()
-  const timer = setTimeout(() => ctrl.abort(), 25_000)
   try {
-    const res = await fetch(
-      `https://api.apify.com/v2/acts/${APIFY_GOOGLE_SEARCH_ACTOR}/run-sync-get-dataset-items?token=${token}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          queries: `site:facebook.com "${businessName}"`,
-          maxPagesPerQuery: 1,
-          resultsPerPage: 5,
-          countryCode: 'tr',
-          languageCode: 'tr',
-        }),
-        signal: ctrl.signal,
-        cache: 'no-store',
-      },
-    )
-    clearTimeout(timer)
-    if (!res.ok) return null
-    const raw: unknown[] = await res.json()
-    if (!Array.isArray(raw)) return null
-
-    interface SearchResult { url: string; title: string; description: string }
-    const results: SearchResult[] = []
-    for (const item of raw) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const cast = item as any
-      if (Array.isArray(cast.organicResults)) {
-        for (const r of cast.organicResults) results.push({ url: r.url ?? '', title: r.title ?? '', description: r.description ?? '' })
-      } else if (cast.url) {
-        results.push({ url: cast.url ?? '', title: cast.title ?? '', description: cast.description ?? '' })
-      }
-    }
+    const results = await googleCSESearch(`site:facebook.com "${businessName}"`, cseKey, cseCx, 5)
+    if (results.length === 0) return null
 
     const FB_URL_RE = /facebook\.com\/([a-zA-Z0-9._-]{3,80})(?:\/|\?|#|$)/
     const FB_SYSTEM = new Set(['sharer', 'share', 'dialog', 'ads', 'business', 'help', 'policies', 'privacy', 'legal', 'about', 'login', 'signup', 'pages', 'groups', 'events', 'watch'])
@@ -1672,7 +1545,6 @@ async function googleSearchFacebookFallback(
     }
     return null
   } catch {
-    clearTimeout(timer)
     return null
   }
 }
@@ -1681,43 +1553,13 @@ async function googleSearchFacebookFallback(
 async function googleSearchTiktokFallback(
   businessName: string,
   phone: string | null,
-  token: string,
+  cseKey: string,
+  cseCx: string,
+  apifyToken: string | null,
 ): Promise<TikTokData | null> {
-  const ctrl = new AbortController()
-  const timer = setTimeout(() => ctrl.abort(), 25_000)
   try {
-    const res = await fetch(
-      `https://api.apify.com/v2/acts/${APIFY_GOOGLE_SEARCH_ACTOR}/run-sync-get-dataset-items?token=${token}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          queries: `site:tiktok.com "${businessName}"`,
-          maxPagesPerQuery: 1,
-          resultsPerPage: 5,
-          countryCode: 'tr',
-          languageCode: 'tr',
-        }),
-        signal: ctrl.signal,
-        cache: 'no-store',
-      },
-    )
-    clearTimeout(timer)
-    if (!res.ok) return null
-    const raw: unknown[] = await res.json()
-    if (!Array.isArray(raw)) return null
-
-    interface SearchResult { url: string; title: string; description: string }
-    const results: SearchResult[] = []
-    for (const item of raw) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const cast = item as any
-      if (Array.isArray(cast.organicResults)) {
-        for (const r of cast.organicResults) results.push({ url: r.url ?? '', title: r.title ?? '', description: r.description ?? '' })
-      } else if (cast.url) {
-        results.push({ url: cast.url ?? '', title: cast.title ?? '', description: cast.description ?? '' })
-      }
-    }
+    const results = await googleCSESearch(`site:tiktok.com "${businessName}"`, cseKey, cseCx, 5)
+    if (results.length === 0) return null
 
     const TT_URL_RE = /tiktok\.com\/@([a-zA-Z0-9._-]{1,30})(?:\/|\?|#|$)/
 
@@ -1733,14 +1575,15 @@ async function googleSearchTiktokFallback(
       const reason = validation?.reason ?? 'site:tiktok.com aramasında ilk sonuç'
 
       console.log(`[TT FALLBACK] @${handle} → confidence=${confidence}`)
-      const profile = await fetchTiktokProfile(handle, token, confidence, reason)
+      const profile = apifyToken
+        ? await fetchTiktokProfile(handle, apifyToken, confidence, reason)
+        : null
       if (profile) return profile
 
       return { handle, followersCount: null, likesCount: null, videosCount: null, lastPostDate: null, activity: 'unknown', confidence, confidenceReason: reason }
     }
     return null
   } catch {
-    clearTimeout(timer)
     return null
   }
 }
@@ -1751,45 +1594,14 @@ async function googleSearchTiktokFallback(
  * "{sector} {city}" aramasında paidResults (ücretli reklamlar) var mı kontrol eder.
  * Rakipler Google Ads kullanıyorsa true döner — "rakipler reklam veriyor, siz vermiyorsunuz" sinyali için.
  */
+// fetchCompetitorGoogleAds: Google Custom Search API ücretli sonuçları (paidResults)
+// ayırt etmediğinden bu sinyal CSE ile tespit edilemiyor. Gelecekte SerpAPI gibi
+// bir servis entegre edildiğinde yeniden etkinleştirilebilir.
 async function fetchCompetitorGoogleAds(
-  sector: string,
-  city: string,
-  token: string,
+  _sector: string,
+  _city: string,
 ): Promise<boolean | null> {
-  if (!sector || !city) return null
-  const ctrl = new AbortController()
-  const timer = setTimeout(() => ctrl.abort(), 20_000)
-  try {
-    const res = await fetch(
-      `https://api.apify.com/v2/acts/${APIFY_GOOGLE_SEARCH_ACTOR}/run-sync-get-dataset-items?token=${token}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          queries: `${sector} ${city}`,
-          maxPagesPerQuery: 1,
-          resultsPerPage: 5,
-          countryCode: 'tr',
-          languageCode: 'tr',
-        }),
-        signal: ctrl.signal,
-        cache: 'no-store',
-      },
-    )
-    clearTimeout(timer)
-    if (!res.ok) return null
-    const raw: unknown[] = await res.json()
-    if (!Array.isArray(raw) || raw.length === 0) return null
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const item = raw[0] as any
-    const paid: unknown[] = item.paidResults ?? item.ads ?? []
-    const hasAds = Array.isArray(paid) && paid.length > 0
-    console.log(`[COMPETITOR ADS] "${sector} ${city}" → paidResults=${Array.isArray(paid) ? paid.length : 0}`)
-    return hasAds
-  } catch {
-    clearTimeout(timer)
-    return null
-  }
+  return null
 }
 
 // ─── Apify — Meta Ad Library ──────────────────────────────────────────────────
@@ -2577,7 +2389,8 @@ async function googleSearchPlatforms(
   sector: string,
   cityQuery: string,
   siteYoutube: string | null,
-  token: string,
+  cseKey: string,
+  cseCx: string,
 ): Promise<PlatformPresence> {
   // Sektör tabanlı platform ilgisi — null = bu sektörde ilgisiz
   const s = normalizeForComparison(sector)
@@ -2610,113 +2423,61 @@ async function googleSearchPlatforms(
     linkedinUrl:     null,
   }
 
-  const ctrl = new AbortController()
-  const timer = setTimeout(() => ctrl.abort(), 25_000)
   try {
-    // Sadece ilgili sektör sorgularını dahil et
-    const queries = [
-      isFood                        ? `"${businessName}" yemeksepeti OR getir`                           : '',
-      (isFood || isAccommodation)   ? `"${businessName}" tripadvisor OR booking.com`                     : '',
+    // Her sorgu için ayrı CSE çağrısı — paralel çalışır
+    const queryList = [
+      isFood                        ? `"${businessName}" yemeksepeti OR getir`                             : '',
+      (isFood || isAccommodation)   ? `"${businessName}" tripadvisor OR booking.com`                       : '',
       (isRetail || isRealEstate)    ? `"${businessName}" sahibinden.com OR hepsiburada.com OR trendyol.com` : '',
-      bookingQuery                  ? bookingQuery                                                        : '',
-      !siteYoutube                  ? `"${businessName}" youtube.com`                                    : '',
-      `${sector} ${cityQuery}`,   // yerel paket için daima dahil
-      `"${businessName}" ${cityQuery} iletişim`,  // e-posta ve LinkedIn keşfi için
-    ].filter(Boolean).join('\n')
+      bookingQuery,
+      !siteYoutube                  ? `"${businessName}" youtube.com`                                      : '',
+      `"${businessName}" ${cityQuery} iletişim`,  // e-posta ve LinkedIn keşfi
+    ].filter(Boolean) as string[]
 
-    const res = await fetch(
-      `https://api.apify.com/v2/acts/${APIFY_GOOGLE_SEARCH_ACTOR}/run-sync-get-dataset-items?token=${token}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          queries,
-          maxPagesPerQuery: 1,
-          resultsPerPage: 5,
-          countryCode: 'tr',
-          languageCode: 'tr',
-        }),
-        signal: ctrl.signal,
-        cache: 'no-store',
-      },
-    )
-    clearTimeout(timer)
-    if (!res.ok) return defaults
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const raw: any[] = await res.json()
-    if (!Array.isArray(raw)) return defaults
+    const allResults = (await Promise.all(
+      queryList.map(q => googleCSESearch(q, cseKey, cseCx, 5))
+    )).flat()
 
     const result = { ...defaults }
-    // Yerel paket eşleşmesi için: şehir/sektör kelimelerini dışarıda bırakarak anlamlı kelimeler
-    const cityWords = new Set(normalizeForComparison(cityQuery).split(' ').filter(w => w.length >= 4))
-    const normBusinessWords = normalizeForComparison(businessName)
-      .split(' ')
-      .filter(w => w.length >= 3 && !cityWords.has(w))
-    const sectorPrefix = sector.toLowerCase().slice(0, Math.min(8, sector.length))
 
-    for (const item of raw) {
-      const query: string = (item.searchQuery?.term ?? item.query ?? '').toLowerCase()
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const organicResults: any[] = item.organicResults ?? []
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const localResults: any[] = item.localResults ?? item.localPack ?? []
-
-      for (const r of organicResults) {
-        const url: string = (r.url ?? '').toLowerCase()
-        if (result.yemeksepeti === false && url.includes('yemeksepeti.com')) result.yemeksepeti = true
-        if (result.getir === false && (url.includes('getir.com') || url.includes('trendyol.com/yemek'))) result.getir = true
-        if (result.tripadvisor === false && (url.includes('tripadvisor.com') || url.includes('booking.com'))) result.tripadvisor = true
-        if (result.marketplace === false && (url.includes('sahibinden.com') || url.includes('hepsiburada.com') || url.includes('trendyol.com'))) result.marketplace = true
-        if (result.bookingPlatform === false && (
-          url.includes('doktortakvimi.com') || url.includes('randevu.com') ||
-          url.includes('treatwell.com') || url.includes('fresha.com') ||
-          url.includes('bookamat.com') || url.includes('calendly.com') ||
-          url.includes('setmore.com') || url.includes('simplybook.') ||
-          url.includes('bookeo.com') || url.includes('acuityscheduling.com')
-        )) result.bookingPlatform = true
-        if (
-          !result.youtubeHandle &&
-          (url.includes('youtube.com/channel/') || url.includes('youtube.com/@') || url.includes('youtube.com/c/'))
-        ) {
-          result.youtubeHandle = r.url ?? null
-        }
-        // LinkedIn şirket/profil sayfası
-        if (!result.linkedinUrl && (url.includes('linkedin.com/company/') || url.includes('linkedin.com/in/'))) {
-          result.linkedinUrl = r.url ?? null
-        }
-        // E-posta adresi çıkar — başlık veya snippet'ten
-        if (!result.emailFromSearch) {
-          const combined = `${r.title ?? ''} ${r.description ?? ''}`
-          const emailMatch = /\b[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}\b/.exec(combined)
-          if (emailMatch) {
-            const addr = emailMatch[0].toLowerCase()
-            // Sosyal medya, no-reply ve genel sistem adreslerini atla
-            if (!/^(no-?reply|info@gmail|info@yahoo|noreply|support@|admin@|mailer@|postmaster@)/.test(addr) &&
-                !addr.includes('@sentry.') && !addr.includes('@example.') && !addr.includes('@schema.')) {
-              result.emailFromSearch = addr
-            }
-          }
-        }
+    for (const r of allResults) {
+      const url = r.url.toLowerCase()
+      if (result.yemeksepeti === false && url.includes('yemeksepeti.com')) result.yemeksepeti = true
+      if (result.getir === false && (url.includes('getir.com') || url.includes('trendyol.com/yemek'))) result.getir = true
+      if (result.tripadvisor === false && (url.includes('tripadvisor.com') || url.includes('booking.com'))) result.tripadvisor = true
+      if (result.marketplace === false && (url.includes('sahibinden.com') || url.includes('hepsiburada.com') || url.includes('trendyol.com'))) result.marketplace = true
+      if (result.bookingPlatform === false && (
+        url.includes('doktortakvimi.com') || url.includes('randevu.com') ||
+        url.includes('treatwell.com') || url.includes('fresha.com') ||
+        url.includes('bookamat.com') || url.includes('calendly.com') ||
+        url.includes('setmore.com') || url.includes('simplybook.') ||
+        url.includes('bookeo.com') || url.includes('acuityscheduling.com')
+      )) result.bookingPlatform = true
+      if (
+        !result.youtubeHandle &&
+        (url.includes('youtube.com/channel/') || url.includes('youtube.com/@') || url.includes('youtube.com/c/'))
+      ) {
+        result.youtubeHandle = r.url
       }
-
-      // Yerel paket kontrolü — sektör+şehir sorgusunun yerel sonuçlarında işletme adı var mı
-      // En az 2 anlamlı kelime (veya tek kelimeli işletme için 1) eşleşmeli
-      if (query.includes(sectorPrefix) && normBusinessWords.length > 0) {
-        for (const lr of localResults) {
-          const lrNorm = normalizeForComparison(lr.title ?? lr.name ?? '')
-          const matchedWords = normBusinessWords.filter(w => lrNorm.includes(w))
-          const needed = Math.min(normBusinessWords.length, 2)
-          if (matchedWords.length >= needed) {
-            result.inLocalPack = true
+      if (!result.linkedinUrl && (url.includes('linkedin.com/company/') || url.includes('linkedin.com/in/'))) {
+        result.linkedinUrl = r.url
+      }
+      if (!result.emailFromSearch) {
+        const combined = `${r.title} ${r.description}`
+        const emailMatch = /\b[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}\b/.exec(combined)
+        if (emailMatch) {
+          const addr = emailMatch[0].toLowerCase()
+          if (!/^(no-?reply|info@gmail|info@yahoo|noreply|support@|admin@|mailer@|postmaster@)/.test(addr) &&
+              !addr.includes('@sentry.') && !addr.includes('@example.') && !addr.includes('@schema.')) {
+            result.emailFromSearch = addr
           }
         }
       }
     }
 
-    console.log(`[PLATFORMS] "${businessName}" → yemeksepeti=${result.yemeksepeti} getir=${result.getir} trip=${result.tripadvisor} market=${result.marketplace} booking=${result.bookingPlatform} yt=${result.youtubeHandle ? 'evet' : 'hayır'} localPack=${result.inLocalPack}`)
+    console.log(`[PLATFORMS] "${businessName}" → yemeksepeti=${result.yemeksepeti} getir=${result.getir} trip=${result.tripadvisor} market=${result.marketplace} booking=${result.bookingPlatform} yt=${result.youtubeHandle ? 'evet' : 'hayır'}`)
     return result
   } catch {
-    clearTimeout(timer)
     return defaults
   }
 }
@@ -2957,6 +2718,9 @@ export async function GET(request: NextRequest) {
     return Response.json({ error: 'API anahtarı eksik.' }, { status: 500 })
 
   const apifyToken = process.env.APIFY_TOKEN ?? null
+  const cseKey = process.env.GOOGLE_CSE_KEY ?? ''
+  const cseCx = process.env.GOOGLE_CSE_CX ?? ''
+  const hasCse = !!(cseKey && cseCx)
 
   // Sektör → kategori profili (tüm puanlama/eksik/pitch buna göre ağırlıklanır)
   const categoryProfile = getCategoryProfile(sector ?? '')
@@ -3030,51 +2794,63 @@ export async function GET(request: NextRequest) {
               // Instagram, Facebook, TikTok, Meta Ads, domain yaşı, platformlar ve Google Ads PARALEL çalışır
               const [instagram, facebook, tiktok, rawMetaItems, domainInfo, platforms, competitorGoogleAds] = await Promise.all([
                 // ── Instagram ──
-                apifyToken
-                  ? igHandleFromSite
-                    ? fetchInstagramProfile(igHandleFromSite, apifyToken, 'definitive', 'Web sitesindeki linkten bulundu')
-                    : googleSearchInstagram(c.name, city ?? '', details.nationalPhoneNumber ?? null, apifyToken)
-                        .then(r => r ?? googleSearchInstagramFallback(c.name, details.nationalPhoneNumber ?? null, apifyToken!))
-                  : Promise.resolve(null),
+                igHandleFromSite
+                  ? (apifyToken
+                      ? fetchInstagramProfile(igHandleFromSite, apifyToken, 'definitive', 'Web sitesindeki linkten bulundu')
+                      : Promise.resolve<InstagramData>({
+                          handle: igHandleFromSite, followersCount: null, postsCount: null, bio: null,
+                          lastPostDate: null, isPrivate: false, activity: 'unknown',
+                          confidence: 'definitive', confidenceReason: 'Web sitesindeki linkten bulundu',
+                          weeklyPostFreq: null, usesReels: null, engagementRate: null,
+                          bioHasPhone: false, bioHasUrl: false, bioLength: null,
+                        }))
+                  : hasCse
+                    ? googleSearchInstagram(c.name, city ?? '', details.nationalPhoneNumber ?? null, cseKey, cseCx, apifyToken)
+                        .then(r => r ?? googleSearchInstagramFallback(c.name, details.nationalPhoneNumber ?? null, cseKey, cseCx, apifyToken))
+                    : Promise.resolve(null),
                 // ── Facebook ──
-                apifyToken
-                  ? fbHandleFromSite
-                    ? googleSearchFacebook(c.name, city ?? '', details.nationalPhoneNumber ?? null, apifyToken).then(
-                        r => r ?? ({
-                          handle: fbHandleFromSite,
-                          pageUrl: `https://www.facebook.com/${fbHandleFromSite}`,
-                          followersCount: null,
-                          likesCount: null,
-                          lastPostDate: null,
-                          activity: 'unknown' as const,
-                          confidence: 'definitive' as const,
-                          confidenceReason: 'Web sitesindeki linkten bulundu',
-                        } satisfies FacebookData),
-                      )
-                    : googleSearchFacebook(c.name, city ?? '', details.nationalPhoneNumber ?? null, apifyToken)
-                        .then(r => r ?? googleSearchFacebookFallback(c.name, details.nationalPhoneNumber ?? null, apifyToken!))
-                  : Promise.resolve(null),
+                fbHandleFromSite
+                  ? googleSearchFacebook(c.name, city ?? '', details.nationalPhoneNumber ?? null, cseKey, cseCx).then(
+                      r => r ?? ({
+                        handle: fbHandleFromSite,
+                        pageUrl: `https://www.facebook.com/${fbHandleFromSite}`,
+                        followersCount: null,
+                        likesCount: null,
+                        lastPostDate: null,
+                        activity: 'unknown' as const,
+                        confidence: 'definitive' as const,
+                        confidenceReason: 'Web sitesindeki linkten bulundu',
+                      } satisfies FacebookData),
+                    )
+                  : hasCse
+                    ? googleSearchFacebook(c.name, city ?? '', details.nationalPhoneNumber ?? null, cseKey, cseCx)
+                        .then(r => r ?? googleSearchFacebookFallback(c.name, details.nationalPhoneNumber ?? null, cseKey, cseCx))
+                    : Promise.resolve(null),
                 // ── TikTok ──
-                apifyToken
-                  ? ttHandleFromSite
-                    ? fetchTiktokProfile(ttHandleFromSite, apifyToken, 'definitive', 'Web sitesindeki linkten bulundu')
-                    : googleSearchTiktok(c.name, city ?? '', details.nationalPhoneNumber ?? null, apifyToken)
-                        .then(r => r ?? googleSearchTiktokFallback(c.name, details.nationalPhoneNumber ?? null, apifyToken!))
-                  : Promise.resolve(null),
+                ttHandleFromSite
+                  ? (apifyToken
+                      ? fetchTiktokProfile(ttHandleFromSite, apifyToken, 'definitive', 'Web sitesindeki linkten bulundu')
+                      : Promise.resolve<TikTokData>({
+                          handle: ttHandleFromSite, followersCount: null, likesCount: null, videosCount: null,
+                          lastPostDate: null, activity: 'unknown', confidence: 'definitive',
+                          confidenceReason: 'Web sitesindeki linkten bulundu',
+                        }))
+                  : hasCse
+                    ? googleSearchTiktok(c.name, city ?? '', details.nationalPhoneNumber ?? null, cseKey, cseCx, apifyToken)
+                        .then(r => r ?? googleSearchTiktokFallback(c.name, details.nationalPhoneNumber ?? null, cseKey, cseCx, apifyToken))
+                    : Promise.resolve(null),
                 // ── Meta Ads ──
                 apifyToken
                   ? metaThrottle(() => fetchMetaAdsRaw(c.name, apifyToken))
                   : Promise.resolve(null),
                 // ── Domain yaşı (RDAP, ücretsiz) ──
                 resolvedWebsiteUrl ? fetchDomainAge(resolvedWebsiteUrl) : Promise.resolve(null),
-                // ── Platform varlığı (tek Google Search çağrısı) ──
-                apifyToken
-                  ? googleSearchPlatforms(c.name, sector ?? '', city ?? '', site?.youtubeHandle ?? null, apifyToken)
+                // ── Platform varlığı (CSE paralel sorguları) ──
+                hasCse
+                  ? googleSearchPlatforms(c.name, sector ?? '', city ?? '', site?.youtubeHandle ?? null, cseKey, cseCx)
                   : Promise.resolve(null),
-                // ── Google Ads rakip tespiti ──
-                apifyToken && sector
-                  ? fetchCompetitorGoogleAds(sector, city ?? '', apifyToken)
-                  : Promise.resolve(null),
+                // ── Google Ads rakip tespiti (CSE ile tespit edilemiyor) ──
+                fetchCompetitorGoogleAds(sector ?? '', city ?? ''),
               ])
 
               const metaAds = rawMetaItems !== null
