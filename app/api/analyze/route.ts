@@ -1598,6 +1598,147 @@ async function googleSearchTiktok(
   }
 }
 
+/** Fallback: site:facebook.com araması ile direkt Facebook sayfası bul. */
+async function googleSearchFacebookFallback(
+  businessName: string,
+  phone: string | null,
+  token: string,
+): Promise<FacebookData | null> {
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), 25_000)
+  try {
+    const res = await fetch(
+      `https://api.apify.com/v2/acts/${APIFY_GOOGLE_SEARCH_ACTOR}/run-sync-get-dataset-items?token=${token}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          queries: `site:facebook.com "${businessName}"`,
+          maxPagesPerQuery: 1,
+          resultsPerPage: 5,
+          countryCode: 'tr',
+          languageCode: 'tr',
+        }),
+        signal: ctrl.signal,
+        cache: 'no-store',
+      },
+    )
+    clearTimeout(timer)
+    if (!res.ok) return null
+    const raw: unknown[] = await res.json()
+    if (!Array.isArray(raw)) return null
+
+    interface SearchResult { url: string; title: string; description: string }
+    const results: SearchResult[] = []
+    for (const item of raw) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const cast = item as any
+      if (Array.isArray(cast.organicResults)) {
+        for (const r of cast.organicResults) results.push({ url: r.url ?? '', title: r.title ?? '', description: r.description ?? '' })
+      } else if (cast.url) {
+        results.push({ url: cast.url ?? '', title: cast.title ?? '', description: cast.description ?? '' })
+      }
+    }
+
+    const FB_URL_RE = /facebook\.com\/([a-zA-Z0-9._-]{3,80})(?:\/|\?|#|$)/
+    const FB_SYSTEM = new Set(['sharer', 'share', 'dialog', 'ads', 'business', 'help', 'policies', 'privacy', 'legal', 'about', 'login', 'signup', 'pages', 'groups', 'events', 'watch'])
+
+    console.log(`[FB FALLBACK] "${businessName}" site:facebook.com → ${results.length} results`)
+
+    for (const result of results) {
+      const m = FB_URL_RE.exec(result.url)
+      if (!m) continue
+      const handle = m[1]
+      if (FB_SYSTEM.has(handle.toLowerCase())) continue
+
+      const validation = validateGoogleSearchCandidate(handle, result.title, result.description, businessName, '', phone)
+      const confidence = validation?.confidence ?? 'possible'
+      const reason = validation?.reason ?? 'site:facebook.com aramasında ilk sonuç'
+
+      const combinedText = `${result.title} ${result.description}`
+      const followersCount = parseFollowersFromSnippet(combinedText)
+      const likesCount = parseLikesFromSnippet(combinedText)
+      const lastPostDate = parseLastPostDateFromSnippet(combinedText)
+      const activity = classifyActivity(lastPostDate)
+
+      console.log(`[FB FALLBACK] @${handle} → confidence=${confidence}`)
+      return { handle, pageUrl: `https://www.facebook.com/${handle}`, followersCount, likesCount, lastPostDate, activity, confidence, confidenceReason: reason }
+    }
+    return null
+  } catch {
+    clearTimeout(timer)
+    return null
+  }
+}
+
+/** Fallback: site:tiktok.com araması ile direkt TikTok hesabı bul. */
+async function googleSearchTiktokFallback(
+  businessName: string,
+  phone: string | null,
+  token: string,
+): Promise<TikTokData | null> {
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), 25_000)
+  try {
+    const res = await fetch(
+      `https://api.apify.com/v2/acts/${APIFY_GOOGLE_SEARCH_ACTOR}/run-sync-get-dataset-items?token=${token}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          queries: `site:tiktok.com "${businessName}"`,
+          maxPagesPerQuery: 1,
+          resultsPerPage: 5,
+          countryCode: 'tr',
+          languageCode: 'tr',
+        }),
+        signal: ctrl.signal,
+        cache: 'no-store',
+      },
+    )
+    clearTimeout(timer)
+    if (!res.ok) return null
+    const raw: unknown[] = await res.json()
+    if (!Array.isArray(raw)) return null
+
+    interface SearchResult { url: string; title: string; description: string }
+    const results: SearchResult[] = []
+    for (const item of raw) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const cast = item as any
+      if (Array.isArray(cast.organicResults)) {
+        for (const r of cast.organicResults) results.push({ url: r.url ?? '', title: r.title ?? '', description: r.description ?? '' })
+      } else if (cast.url) {
+        results.push({ url: cast.url ?? '', title: cast.title ?? '', description: cast.description ?? '' })
+      }
+    }
+
+    const TT_URL_RE = /tiktok\.com\/@([a-zA-Z0-9._-]{1,30})(?:\/|\?|#|$)/
+
+    console.log(`[TT FALLBACK] "${businessName}" site:tiktok.com → ${results.length} results`)
+
+    for (const result of results) {
+      const m = TT_URL_RE.exec(result.url)
+      if (!m) continue
+      const handle = m[1]
+
+      const validation = validateGoogleSearchCandidate(handle, result.title, result.description, businessName, '', phone)
+      const confidence = validation?.confidence ?? 'possible'
+      const reason = validation?.reason ?? 'site:tiktok.com aramasında ilk sonuç'
+
+      console.log(`[TT FALLBACK] @${handle} → confidence=${confidence}`)
+      const profile = await fetchTiktokProfile(handle, token, confidence, reason)
+      if (profile) return profile
+
+      return { handle, followersCount: null, likesCount: null, videosCount: null, lastPostDate: null, activity: 'unknown', confidence, confidenceReason: reason }
+    }
+    return null
+  } catch {
+    clearTimeout(timer)
+    return null
+  }
+}
+
 // ─── Apify — Google Ads Rakip Tespiti ────────────────────────────────────────
 
 /**
@@ -2905,12 +3046,14 @@ export async function GET(request: NextRequest) {
                         } satisfies FacebookData),
                       )
                     : googleSearchFacebook(c.name, city ?? '', details.nationalPhoneNumber ?? null, apifyToken)
+                        .then(r => r ?? googleSearchFacebookFallback(c.name, details.nationalPhoneNumber ?? null, apifyToken!))
                   : Promise.resolve(null),
                 // ── TikTok ──
                 apifyToken
                   ? ttHandleFromSite
                     ? fetchTiktokProfile(ttHandleFromSite, apifyToken, 'definitive', 'Web sitesindeki linkten bulundu')
                     : googleSearchTiktok(c.name, city ?? '', details.nationalPhoneNumber ?? null, apifyToken)
+                        .then(r => r ?? googleSearchTiktokFallback(c.name, details.nationalPhoneNumber ?? null, apifyToken!))
                   : Promise.resolve(null),
                 // ── Meta Ads ──
                 apifyToken
