@@ -240,6 +240,8 @@ export interface Lead {
   youtubeHandle: string | null
   /** Teslimat / seyahat / marketplace platform varlığı */
   platforms: PlatformPresence | null
+  /** "{sector} {city}" Google aramasında rakiplerin ücretli reklam verip vermediği */
+  competitorGoogleAds: boolean | null
   _preScore: number
   _candidateCount: number
 }
@@ -1502,6 +1504,53 @@ async function googleSearchTiktok(
   }
 }
 
+// ─── Apify — Google Ads Rakip Tespiti ────────────────────────────────────────
+
+/**
+ * "{sector} {city}" aramasında paidResults (ücretli reklamlar) var mı kontrol eder.
+ * Rakipler Google Ads kullanıyorsa true döner — "rakipler reklam veriyor, siz vermiyorsunuz" sinyali için.
+ */
+async function fetchCompetitorGoogleAds(
+  sector: string,
+  city: string,
+  token: string,
+): Promise<boolean | null> {
+  if (!sector || !city) return null
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), 20_000)
+  try {
+    const res = await fetch(
+      `https://api.apify.com/v2/acts/${APIFY_GOOGLE_SEARCH_ACTOR}/run-sync-get-dataset-items?token=${token}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          queries: `${sector} ${city}`,
+          maxPagesPerQuery: 1,
+          resultsPerPage: 5,
+          countryCode: 'tr',
+          languageCode: 'tr',
+        }),
+        signal: ctrl.signal,
+        cache: 'no-store',
+      },
+    )
+    clearTimeout(timer)
+    if (!res.ok) return null
+    const raw: unknown[] = await res.json()
+    if (!Array.isArray(raw) || raw.length === 0) return null
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const item = raw[0] as any
+    const paid: unknown[] = item.paidResults ?? item.ads ?? []
+    const hasAds = Array.isArray(paid) && paid.length > 0
+    console.log(`[COMPETITOR ADS] "${sector} ${city}" → paidResults=${Array.isArray(paid) ? paid.length : 0}`)
+    return hasAds
+  } catch {
+    clearTimeout(timer)
+    return null
+  }
+}
+
 // ─── Apify — Meta Ad Library ──────────────────────────────────────────────────
 
 const APIFY_META_ADS_ACTOR = 'apify~facebook-ads-scraper'
@@ -1833,6 +1882,7 @@ function computeGap(
   hasGoogleDescription: boolean,
   platforms: PlatformPresence | null,
   googleBusinessScore: number,
+  competitorGoogleAds: boolean | null,
 ): number {
   if (businessStatus === 'CLOSED_PERMANENTLY') return 0
 
@@ -1951,6 +2001,9 @@ function computeGap(
   // Not: hasLiveChat (~%65) ve hasNewsletter (~%60) JS-render bağımlı — güven eşiği altında, kaldırıldı.
   // Not: Platform varlığı (Yemeksepeti, Getir vb.) Google arama tabanlı (~%60) — güven eşiği altında, kaldırıldı.
 
+  // ── Rakip Google Ads ──
+  if (competitorGoogleAds && !site?.hasGoogleAds) s += Math.round(10 * wAds)
+
   return Math.min(s, 100)
 }
 
@@ -1980,6 +2033,7 @@ function detectGaps(
   platforms: PlatformPresence | null,
   googleBusinessScore: number,
   metaAdsAge: number | null,
+  competitorGoogleAds: boolean | null,
 ): string[] {
   if (businessStatus === 'CLOSED_PERMANENTLY') return ['İşletme kalıcı olarak kapalı']
 
@@ -2072,6 +2126,12 @@ function detectGaps(
   // ── Meta Ads ──
   if (metaAds?.hasHistoricalAds && !metaAds.hasActiveAds)
     add(`Geçmişte ${metaAds.totalAdCount} Meta reklamı vermiş ama şu an aktif değil`, profile.ads * 3)
+
+  // ── Google Ads rakip sinyali ──
+  if (competitorGoogleAds && !site?.hasGoogleAds)
+    add('Rakipler bu sektörde Google Ads ile arama sonuçlarının tepesinde çıkıyor; siz organik sıralamaya bağlısınız', profile.ads * 4)
+  else if (!competitorGoogleAds && site && !site.hasGoogleAds && profile.ads >= 3)
+    add('Google Ads kampanyası tespit edilemedi — arama bazlı müşteriler reklam veren rakiplere gidiyor', profile.ads * 2)
 
   // ── Facebook ──
   if (!facebook)
@@ -2455,6 +2515,7 @@ function buildLead(
   profile: CategoryProfile,
   domainInfo: DomainInfo | null,
   topCompetitor: { name: string; reviewCount: number; rating: number | null } | null,
+  competitorGoogleAds: boolean | null,
 ): Lead {
   const { rating, reviewCount, businessStatus } = c
   const photoCount = details.photos?.length ?? 0
@@ -2522,6 +2583,7 @@ function buildLead(
     hasGoogleDescription,
     platforms,
     googleBusinessScore,
+    competitorGoogleAds,
   )
 
   return {
@@ -2548,6 +2610,7 @@ function buildLead(
     tiktokHandle: tiktok?.handle ?? null,
     tiktok,
     metaAds,
+    competitorGoogleAds,
     score: Math.round(Math.sqrt(odemeGucu * acikSiddeti)),
     odemeGucu,
     acikSiddeti,
@@ -2555,7 +2618,7 @@ function buildLead(
       websiteSource, rating, reviewCount, businessStatus, photoCount, hasOpeningHours,
       site, instagram, facebook, tiktok, metaAds, profile, topCompetitor,
       lastReviewDate, negativeReviewRate, hasGoogleDescription,
-      platforms, googleBusinessScore, metaAdsAge,
+      platforms, googleBusinessScore, metaAdsAge, competitorGoogleAds,
     ),
     pitch: generatePitch(
       websiteSource, rating, reviewCount, site, photoCount, priceLevel, instagram, metaAds, profile, hasOpeningHours,
@@ -2722,8 +2785,8 @@ export async function GET(request: NextRequest) {
               const fbHandleFromSite = site?.facebookHandle ?? null
               const ttHandleFromSite = site?.tiktokHandle ?? null
 
-              // Instagram, Facebook, TikTok, Meta Ads, domain yaşı ve platformlar PARALEL çalışır
-              const [instagram, facebook, tiktok, rawMetaItems, domainInfo, platforms] = await Promise.all([
+              // Instagram, Facebook, TikTok, Meta Ads, domain yaşı, platformlar ve Google Ads PARALEL çalışır
+              const [instagram, facebook, tiktok, rawMetaItems, domainInfo, platforms, competitorGoogleAds] = await Promise.all([
                 // ── Instagram ──
                 apifyToken
                   ? igHandleFromSite
@@ -2763,6 +2826,10 @@ export async function GET(request: NextRequest) {
                 apifyToken
                   ? googleSearchPlatforms(c.name, sector ?? '', city ?? '', site?.youtubeHandle ?? null, apifyToken)
                   : Promise.resolve(null),
+                // ── Google Ads rakip tespiti ──
+                apifyToken && sector
+                  ? fetchCompetitorGoogleAds(sector, city ?? '', apifyToken)
+                  : Promise.resolve(null),
               ])
 
               const metaAds = rawMetaItems !== null
@@ -2777,6 +2844,7 @@ export async function GET(request: NextRequest) {
                 c, details, site, resolvedWebsiteUrl, websiteSource,
                 instagram, facebook, tiktok, metaAds, platforms,
                 s, candidates.length, categoryProfile, domainInfo, topCompetitor,
+                competitorGoogleAds,
               )
 
               emit({ type: 'lead', data: lead })

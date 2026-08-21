@@ -546,7 +546,8 @@ function LeadCard({
     lead.instagram?.activity === 'dormant'
   const adsUrgent =
     (lead.websiteSource !== 'none' && !lead.siteAnalysis?.hasPixel && !lead.siteAnalysis?.hasGoogleAds) ||
-    (lead.metaAds?.hasHistoricalAds === true && !lead.metaAds?.hasActiveAds)
+    (lead.metaAds?.hasHistoricalAds === true && !lead.metaAds?.hasActiveAds) ||
+    (lead.competitorGoogleAds === true && !lead.siteAnalysis?.hasGoogleAds)
 
   const services = [
     { label: 'Web Sitesi',      urgent: siteUrgent,   weight: lead.categoryProfile.website },
@@ -609,6 +610,8 @@ function LeadCard({
     _s && !_s.hasPixel && !_s.hasGoogleAds && lead.categoryProfile.ads >= 3,
     // Meta Ads geçmişte vardı ama şu an durmuş
     lead.metaAds?.hasHistoricalAds && !lead.metaAds?.hasActiveAds,
+    // Rakipler Google Ads veriyor ama işletme vermiyor
+    lead.competitorGoogleAds === true && !_s?.hasGoogleAds,
   ].filter(Boolean).length
 
 
@@ -1193,6 +1196,27 @@ function LeadCard({
                     </dl>
                   )}
                 </div>
+
+                {/* Rakip Google Ads */}
+                {lead.competitorGoogleAds !== null && (
+                  <div className="mb-4">
+                    <p className="text-[10px] font-bold text-zinc-700 uppercase tracking-wider mb-2">Rakip Google Ads Tespiti</p>
+                    <dl className="space-y-2">
+                      <Row label="Sektör Aramasında Reklam">
+                        {lead.competitorGoogleAds
+                          ? <span className="text-xs font-semibold text-orange-400">⚠ Rakipler bu sektörde Google Ads kullanıyor</span>
+                          : <span className="text-xs text-zinc-500">Sektör aramasında ücretli reklam görülmedi</span>}
+                      </Row>
+                      {lead.competitorGoogleAds && (
+                        <Row label="Bu İşletme">
+                          {lead.siteAnalysis?.hasGoogleAds
+                            ? <span className="text-xs font-semibold text-emerald-400">✓ Google Ads kodu var</span>
+                            : <span className="text-xs font-medium text-red-400">✕ Google Ads kodu yok — rakipler önde</span>}
+                        </Row>
+                      )}
+                    </dl>
+                  </div>
+                )}
 
                 {/* Meta Reklam Kütüphanesi */}
                 <div>
