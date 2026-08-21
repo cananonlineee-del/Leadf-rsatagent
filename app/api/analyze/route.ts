@@ -1882,6 +1882,7 @@ function computeGap(
     else if (instagram?.activity === 'dormant') s += Math.round(6 * wIg)
     if (instagram?.engagementRate != null && instagram.engagementRate < 1) s += Math.round(8 * wIg)
     if (instagram?.weeklyPostFreq != null && instagram.weeklyPostFreq < 1 && instagram.activity === 'active') s += Math.round(5 * wIg)
+    if (instagram?.followersCount != null && instagram.followersCount < 500) s += Math.round(5 * wIg)
   }
 
   // ── Meta Ads kanalı ──
@@ -1895,6 +1896,7 @@ function computeGap(
   else if (facebook.confidence === 'definitive') {
     if (facebook.activity === 'neglected') s += Math.round(12 * wFb)
     else if (facebook.activity === 'dormant') s += Math.round(6 * wFb)
+    if (facebook.followersCount != null && facebook.followersCount < 500) s += Math.round(4 * wFb)
   }
 
   // ── TikTok kanalı ──
@@ -1907,7 +1909,12 @@ function computeGap(
     if (tiktok.activity === 'neglected') s += Math.round(10 * wTt)
     else if (tiktok.activity === 'dormant') s += Math.round(5 * wTt)
     if (tiktok.videosCount != null && tiktok.videosCount < 10) s += Math.round(3 * wTt)
+    if (tiktok.followersCount != null && tiktok.followersCount < 500) s += Math.round(4 * wTt)
   }
+
+  // ── Tek platform sinyali ──
+  const activePlatformCount = [instagram, facebook, tiktok].filter(p => p !== null).length
+  if (activePlatformCount === 1) s += Math.round(5 * (profile.instagram / 5))
 
   // ── Site içerik kalitesi (site varsa) ──
   if (site) {
@@ -2095,6 +2102,19 @@ function detectGaps(
   // ── Instagram etkileşim oranı ──
   if (instagram?.engagementRate != null && instagram.engagementRate < 1)
     add(`Instagram etkileşim oranı %${instagram.engagementRate.toFixed(1)} — takipçi kitlesi içerik ile bağ kuramıyor`, profile.instagram * 2)
+
+  // ── Takipçi sayısı sinyalleri ──
+  if (instagram?.confidence !== 'possible' && instagram?.followersCount != null && instagram.followersCount < 500)
+    add(`Instagram takipçi sayısı düşük (${instagram.followersCount.toLocaleString('tr-TR')}) — hedefli büyüme stratejisiyle kitle genişletilebilir`, profile.instagram * 2)
+  if (facebook?.confidence === 'definitive' && facebook?.followersCount != null && facebook.followersCount < 500)
+    add(`Facebook sayfasında ${facebook.followersCount.toLocaleString('tr-TR')} takipçi — içerik stratejisiyle kitle artırılabilir`, profile.ads)
+  if (tiktok && tiktok.followersCount != null && tiktok.followersCount < 500)
+    add(`TikTok'ta ${tiktok.followersCount.toLocaleString('tr-TR')} takipçi var — viral video stratejisiyle hızlı kitle büyümesi mümkün`, profile.instagram)
+
+  // ── Tek platform sinyali ──
+  const activePlatforms = [instagram, facebook, tiktok].filter(p => p !== null)
+  if (activePlatforms.length === 1)
+    add('Sadece 1 sosyal medya kanalında varlık gösteriliyor — çoklu platform stratejisiyle daha geniş kitleye ulaşılabilir', profile.instagram * 2)
 
   // ── Rakip karşılaştırması ──
   if (topCompetitor && topCompetitor.reviewCount > reviewCount * 2)
